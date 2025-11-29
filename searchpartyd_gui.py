@@ -522,7 +522,7 @@ class SearchpartydGUI:
             message: The message to log
             tag: Optional tag for text styling (header, success, error, warning)
         """
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_line = f"[{timestamp}] {message}\n"
         
         # Store in log entries for export
