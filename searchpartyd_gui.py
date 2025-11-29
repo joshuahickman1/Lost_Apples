@@ -1874,8 +1874,9 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             # Create decryptor
             decryptor = ObservationsDecryptor(self.observations_key)
             
-            # Output to current directory
-            output_dir = Path.cwd()
+            # Create dedicated output folder in current directory
+            output_dir = Path.cwd() / "decrypted_observations"
+            output_dir.mkdir(parents=True, exist_ok=True)
             self._log(f"\nDecrypting to: {output_dir}")
             
             # Decrypt database first
@@ -2133,25 +2134,19 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             tables_label = ttk.Label(info_frame, text=f"Error reading tables: {str(e)}")
             tables_label.grid(row=2, column=0, sticky=tk.W)
         
-        # Output directory selection
+        # Output directory info (fixed folder in working directory)
         output_frame = ttk.LabelFrame(main_frame, text="Output Directory", padding="10")
         output_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         output_frame.columnconfigure(0, weight=1)
         
-        output_dir_var = tk.StringVar(value=str(Path.cwd()))
-        output_entry = ttk.Entry(output_frame, textvariable=output_dir_var, width=50)
-        output_entry.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        def browse_output():
-            folder = filedialog.askdirectory(
-                title="Select Output Directory",
-                initialdir=output_dir_var.get()
-            )
-            if folder:
-                output_dir_var.set(folder)
-        
-        browse_btn = ttk.Button(output_frame, text="Browse...", command=browse_output)
-        browse_btn.grid(row=0, column=1)
+        # Fixed output directory - always use observations_db_query_output folder
+        fixed_output_dir = Path.cwd() / "observations_db_query_output"
+        output_dir_label = ttk.Label(
+            output_frame, 
+            text=f"CSV and KML files will be saved to:\n{fixed_output_dir}",
+            wraplength=450
+        )
+        output_dir_label.grid(row=0, column=0, sticky=tk.W)
         
         # Options frame
         options_frame = ttk.LabelFrame(main_frame, text="Query Options", padding="10")
@@ -2189,10 +2184,9 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         
         def run_query():
             """Execute the two-stage query."""
-            output_dir = output_dir_var.get()
-            if not output_dir or not Path(output_dir).exists():
-                messagebox.showerror("Invalid Directory", "Please select a valid output directory.")
-                return
+            # Use fixed output directory
+            output_dir = Path.cwd() / "observations_db_query_output"
+            output_dir.mkdir(parents=True, exist_ok=True)
             
             # Disable button during processing
             run_btn.config(state=tk.DISABLED)
@@ -2221,7 +2215,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     self._log("\nExecuting two-stage analysis...")
                     self._log("  Note: Original decrypted files are preserved")
                     results = handler.run_full_analysis(
-                        output_dir, 
+                        str(output_dir), 
                         use_extended,
                         export_kml=export_kml_var.get()
                     )
@@ -2310,8 +2304,8 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         # Note about preserved files
         note_label = ttk.Label(
             main_frame,
-            text="Note: Decrypted database and WAL files are preserved in the working directory\n"
-                 "for further analysis with SQLite tools.",
+            text="Note: Decrypted database and WAL files are in 'decrypted_observations' folder.\n"
+                 "Query results (CSV/KML) are saved to 'observations_db_query_output' folder.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray"
         )
