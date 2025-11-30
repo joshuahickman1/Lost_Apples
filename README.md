@@ -6,7 +6,7 @@
 
 For more information see the blog The Binary Hick:
 
-[Where the Wild Tags Are & AirTag Stories](https://thebinaryhick.blog/2024/09/02/where-the-wild-tags-are-other-airtag-stories/)
+[Where the Wild Tags Are & Other AirTag Stories](https://thebinaryhick.blog/2024/09/02/where-the-wild-tags-are-other-airtag-stories/)
 
 [Further Observations - More on iOS Search Party](https://thebinaryhick.blog/2025/08/19/further-observations-more-on-ios-search-party/)
 
