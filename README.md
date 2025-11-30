@@ -163,7 +163,7 @@ Decrypted binary plist (bplist) files can be exported to the working directory w
 
 Decrypted Observations.db and the associated write-ahead-log (-WAL) file are automatically exported to the working directory and preserved for further analysis if needed.
 
-- **Qbservations.db queries**: CSV and KML exports are sent to the working directory when the queries are run
+- **Observations.db queries**: CSV and KML exports are sent to the working directory when the queries are run
 
 ---
 
