@@ -170,7 +170,7 @@ Decrypted Observations.db and the associated write-ahead-log (-WAL) file are aut
 
 ## iOS Version Compatibility
 
-Lost Apples supports and has been tested on iOS extractions from:
+Lost Apples supports iOS extractions from:
 - iOS 15.3.1 and later
 - Tested on iOS 15.3.1, 16.x, 17.x, 18.x, and 26.x
 
