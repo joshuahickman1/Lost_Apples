@@ -472,7 +472,7 @@ class SearchpartydGUI:
         )
         self.query_obs_btn.grid(row=0, column=1, padx=5)
         
-        # Row 2: Secondary action buttons (centered) - Clear Log, Export Log, About
+        # Row 2: Secondary action buttons (centered) - Clear Log, Export Log, Export Keys, About
         row2_frame = ttk.Frame(action_frame)
         row2_frame.grid(row=1, column=0)
         
@@ -494,6 +494,23 @@ class SearchpartydGUI:
         )
         export_btn.grid(row=0, column=1, padx=5)
         
+        # Export Keys button (initially disabled, enabled after key extraction)
+        self.export_keys_btn = ttk.Button(
+            row2_frame,
+            text="Export Keys",
+            command=self._export_keys,
+            width=12,
+            state=tk.DISABLED
+        )
+        self.export_keys_btn.grid(row=0, column=2, padx=5)
+        
+        # Add tooltip for Export Keys button
+        ToolTip(
+            self.export_keys_btn,
+            "Export the extracted encryption keys (BeaconStore and Observations)\n"
+            "to a text file in the working directory."
+        )
+        
         # About button
         about_btn = ttk.Button(
             row2_frame,
@@ -501,7 +518,7 @@ class SearchpartydGUI:
             command=self._show_about,
             width=10
         )
-        about_btn.grid(row=0, column=2, padx=5)
+        about_btn.grid(row=0, column=3, padx=5)
         
     def _browse_searchpartyd_folder(self):
         """Open dialog to select searchpartyd folder."""
@@ -646,6 +663,63 @@ class SearchpartydGUI:
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export log:\n{str(e)}")
                 self._log(f"Export failed: {str(e)}", "error")
+    
+    def _export_keys(self):
+        """
+        Export the extracted encryption keys to a text file.
+        
+        Creates a file named 'extracted_keys_YYYYMMDD_HHMMSS.txt' in the
+        current working directory containing the BeaconStore and Observations
+        keys in hexadecimal format.
+        """
+        if not self.beacon_store_key:
+            messagebox.showinfo("No Keys", "No keys have been extracted yet.\nRun analysis first.")
+            return
+        
+        # Generate default filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_filename = f"extracted_keys_{timestamp}.txt"
+        
+        # Use the current working directory as default location
+        output_path = Path.cwd() / default_filename
+        
+        try:
+            with open(output_path, 'w') as f:
+                f.write("="*80 + "\n")
+                f.write("Lost Apples - Extracted Encryption Keys\n")
+                f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("="*80 + "\n\n")
+                
+                # BeaconStore Key
+                f.write("BeaconStore Key\n")
+                f.write("-"*40 + "\n")
+                f.write(f"Key (hex): {self.beacon_store_key.hex()}\n")
+                f.write(f"Key length: {len(self.beacon_store_key)} bytes\n")
+                f.write("\n")
+                
+                # Observations Key
+                f.write("Observations Key\n")
+                f.write("-"*40 + "\n")
+                if self.observations_key:
+                    f.write(f"Key (hex): {self.observations_key.hex()}\n")
+                    f.write(f"Key length: {len(self.observations_key)} bytes\n")
+                else:
+                    f.write("Key: Not found in keychain\n")
+                f.write("\n")
+                
+                f.write("="*80 + "\n")
+                f.write("Note: These keys are required to decrypt searchpartyd records\n")
+                f.write("and the Observations.db database from this iOS extraction.\n")
+            
+            messagebox.showinfo(
+                "Export Keys", 
+                f"Keys exported successfully to:\n{output_path}"
+            )
+            self._log(f"✓ Keys exported to: {output_path}", "success")
+            
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export keys:\n{str(e)}")
+            self._log(f"✗ Key export failed: {str(e)}", "error")
                 
     def _show_about(self):
         """Show the About dialog."""
@@ -766,6 +840,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         self.owner_sharing_circle_records = []
         self.owner_peer_trust_records = []
         self.export_results_btn.config(state=tk.DISABLED)
+        self.export_keys_btn.config(state=tk.DISABLED)
         
         # Run analysis in separate thread to keep GUI responsive
         analysis_thread = threading.Thread(target=self._run_analysis, daemon=True)
@@ -1485,14 +1560,20 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             if self.beacon_store_key:
                 self._log("✓ BeaconStore key extracted successfully!", "success")
                 self._log(f"  Format: {source_type}")
-                self._log(f"  Key: {self.beacon_store_key.hex()[:32]}... ({len(self.beacon_store_key)} bytes)")
+                self._log(f"  Key (hex): {self.beacon_store_key.hex()}")
+                self._log(f"  Key length: {len(self.beacon_store_key)} bytes")
                 
                 # Log Observations key status
                 if self.observations_key:
                     self._log("✓ Observations key extracted successfully!", "success")
-                    self._log(f"  Key: {self.observations_key.hex()[:32]}... ({len(self.observations_key)} bytes)")
+                    self._log(f"  Key (hex): {self.observations_key.hex()}")
+                    self._log(f"  Key length: {len(self.observations_key)} bytes")
                 else:
                     self._log("⚠ Observations key not found (database decryption unavailable)", "warning")
+                
+                # Enable the Export Keys button now that we have at least one key
+                self.export_keys_btn.config(state=tk.NORMAL)
+                self._log("✓ Export Keys button is now enabled", "success")
                 
                 return True
             else:

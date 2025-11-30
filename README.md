@@ -15,7 +15,7 @@ https://thebinaryhick.blog/2025/08/19/further-observations-more-on-ios-search-pa
 
 ## Features
 
-- **Keychain Decryption**: Automatically extracts the BeaconStore and Observations encryption keys from iOS keychain files
+- **Keychain Parsing**: Automatically extracts the BeaconStore and Observations encryption keys from iOS keychain files
 - **Multi-Record Type Parsing**: Supports multiple different record types from the searchpartyd folder
 - **Observations.db Decryption**: Decrypts the SQLite database containing device observations with locations
 - **Cross-Platform**: Works on macOS and Windows
