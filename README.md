@@ -5,7 +5,9 @@
 **A tool for parsing iOS FindMy network and Bluetooth tracker data on iOS devices**
 
 For more information see the blog The Binary Hick:
+
 https://thebinaryhick.blog/2024/09/02/where-the-wild-tags-are-other-airtag-stories/
+
 https://thebinaryhick.blog/2025/08/19/further-observations-more-on-ios-search-party/
 
 
