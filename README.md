@@ -18,8 +18,7 @@ For more information see the blog The Binary Hick:
 - **Keychain Parsing**: Automatically extracts the BeaconStore and Observations encryption keys from iOS keychain files
 - **Multi-Record Type Parsing**: Supports multiple different record types from the searchpartyd folder
 - **Observations.db Decryption**: Decrypts the SQLite database containing device observations with locations
-- **Multiple Extraction Formats**: Processes UFED & Graykey extractions
-- **Direct Zip & Folder Processing**: Process commercial tool zip file extractions or process the com.apple.icloud.searchpartyd folder & associated keychain
+- **Direct Zip & Folder Processing**: Directly process commercial tool zip file extractions from Premium/Inseyets or Graykey, or process the com.apple.icloud.searchpartyd folder & associated keychain
 - **Export Options**: Export results to CSV and KML formats for further analysis
 - **Beacon Name Enrichment**: Links custom beacon names and emojis across related records
 - **File Integrity**: Preserves original files while creating separate decrypted copies
