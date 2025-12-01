@@ -650,7 +650,8 @@ class SearchpartydGUI:
         
         if file:
             try:
-                with open(file, 'w') as f:
+                # Use UTF-8 encoding to support Unicode characters (✓, emojis, etc.)
+                with open(file, 'w', encoding='utf-8') as f:
                     f.write("="*80 + "\n")
                     f.write("Lost Apples - Analysis Log\n")
                     f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -684,7 +685,8 @@ class SearchpartydGUI:
         output_path = Path.cwd() / default_filename
         
         try:
-            with open(output_path, 'w') as f:
+            # Use UTF-8 encoding to support Unicode characters (✓, emojis, etc.)
+            with open(output_path, 'w', encoding='utf-8') as f:
                 f.write("="*80 + "\n")
                 f.write("Lost Apples - Extracted Encryption Keys\n")
                 f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
