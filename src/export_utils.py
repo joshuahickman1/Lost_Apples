@@ -114,6 +114,17 @@ class ExportUtils:
                             description_parts.append(f"{key}: {value}")
                 
                 description = '<br/>'.join(description_parts)
+
+                # Adds ExtendedData from available fields (excluding latitude, longitude, and name - to match your description)
+                # So description info is shown when imported into Google Earth or other mapping applications to visualize location data
+                extended_data_lines = []
+                for key, value in item.items():
+                    if key not in ['latitude', 'longitude', 'name']:
+                        escaped_key = ExportUtils._escape_xml(str(key))
+                        escaped_value = ExportUtils._escape_xml(str(value))
+                        extended_data_lines.append(
+                            f'        <Data name="{escaped_key}"><value>{escaped_value}</value></Data>'
+                        )
                 
                 # Get name for placemark
                 placemark_name = item.get('name', item.get('uuid', f'Location {placemark_count}'))
@@ -121,6 +132,9 @@ class ExportUtils:
                 kml_content.append('    <Placemark>')
                 kml_content.append(f'      <name>{ExportUtils._escape_xml(str(placemark_name))}</name>')
                 kml_content.append(f'      <description>{ExportUtils._escape_xml(description)}</description>')
+                kml_content.append('      <ExtendedData>')
+                kml_content.extend(extended_data_lines)
+                kml_content.append('      </ExtendedData>')
                 kml_content.append('      <Point>')
                 kml_content.append(f'        <coordinates>{lon},{lat},0</coordinates>')
                 kml_content.append('      </Point>')
