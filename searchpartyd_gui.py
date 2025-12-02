@@ -436,12 +436,45 @@ class SearchpartydGUI:
         )
         self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Configure text tags for colored output (bright colors for dark background)
-        self.status_text.tag_config("header", foreground="#5DADE2", font=("Courier", 12, "bold"))  # Light sky blue
-        self.status_text.tag_config("success", foreground="#58D68D")  # Light green
-        self.status_text.tag_config("error", foreground="#F1948A")    # Light coral/salmon
-        self.status_text.tag_config("warning", foreground="#F7DC6F")  # Light yellow/gold
-        
+        # Configure text tags with colors based on background brightness
+        self._configure_log_colors()
+
+    def _is_dark_background(self) -> bool:
+        """Detect if the text widget has a dark background."""
+        try:
+            # Get the background color of the text widget
+            bg_color = self.status_text.cget("background")
+            # Convert color name to RGB values
+            rgb = self.status_text.winfo_rgb(bg_color)
+            # RGB values are 16-bit (0-65535), normalize to 0-255
+            r, g, b = rgb[0] // 256, rgb[1] // 256, rgb[2] // 256
+            # Calculate perceived brightness using luminance formula
+            brightness = (0.299 * r + 0.587 * g + 0.114 * b)
+            return brightness < 128
+        except Exception:
+            # Default to light background if detection fails
+            return False
+
+    def _configure_log_colors(self):
+        """Configure text tag colors based on background brightness."""
+        if self._is_dark_background():
+            # Bright colors for dark backgrounds
+            header_color = "#5DADE2"   # Light sky blue
+            success_color = "#58D68D"  # Light green
+            error_color = "#F1948A"    # Light coral/salmon
+            warning_color = "#F7DC6F"  # Light yellow/gold
+        else:
+            # Darker colors for light backgrounds
+            header_color = "#1A5276"   # Dark blue
+            success_color = "#1E8449"  # Dark green
+            error_color = "#C0392B"    # Dark red
+            warning_color = "#B7950B"  # Dark gold/olive
+
+        self.status_text.tag_config("header", foreground=header_color, font=("Courier", 12, "bold"))
+        self.status_text.tag_config("success", foreground=success_color)
+        self.status_text.tag_config("error", foreground=error_color)
+        self.status_text.tag_config("warning", foreground=warning_color)
+
     def _create_action_buttons(self, parent):
         """Create the action buttons section."""
         action_frame = ttk.Frame(parent)
