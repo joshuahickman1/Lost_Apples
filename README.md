@@ -39,6 +39,10 @@ For more information see the blog The Binary Hick:
 | **OwnerSharingCircle** | Beacons shared BY the user | Who the user has shared their FindMy-compatible devices with |
 | **OwnerPeerTrust** | Peer sharing relationships | People with whom beacons are shared |
 | **Observations.db** | SQLite database | Locations of the iOS device when FindMy devices are observed |
+| **ItemSharingKeys.db** | SQLite database | Pre-determined near-owner advertisements for items shared with the device being examined |
+| **CloudStorage.db** | SQLite database | TBD |
+| **CloudStorage_CKRecordCache.db** | SQLite database | TBD |
+| **StandaloneBeacond.db** | SQLite database | TBD |
 
 ---
 
