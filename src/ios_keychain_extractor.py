@@ -173,8 +173,13 @@ class iOSKeychainExtractor:
             
             # Only continue if this is a service we care about
             # Services: BeaconStore, Observations, and other searchpartyd-related services
+            # iOS 16+ adds additional encrypted databases with their own keys:
+            #   - CloudStorage.db uses CloudStorage key
+            #   - CloudStorage_CKRecordCache.db uses CloudKitCache key  
+            #   - ItemSharingKeys.db uses KeyDatabase key
+            #   - StandaloneBeacon.db uses StandAloneBeacon key
             target_services = ['beaconstore', 'observations', 'keydatabase', 'cloudstorage', 
-                              'itemsharingkeys', 'standalonbeacon', 'beacon']
+                              'cloudkitcache', 'itemsharingkeys', 'standalonbeacon', 'standalonebeacon', 'beacon']
             if not entry.service_name:
                 return False
             
@@ -488,6 +493,55 @@ class iOSKeychainExtractor:
             The 32-byte BeaconStore key, or None if not found
         """
         return self.extracted_keys.get('BeaconStore')
+    
+    def get_observations_key(self) -> Optional[bytes]:
+        """
+        Get the Observations key for Observations.db decryption.
+        
+        Returns:
+            The 32-byte Observations key, or None if not found
+        """
+        return self.extracted_keys.get('Observations')
+    
+    def get_cloud_storage_key(self) -> Optional[bytes]:
+        """
+        Get the CloudStorage key for CloudStorage.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte CloudStorage key, or None if not found
+        """
+        return self.extracted_keys.get('CloudStorage')
+    
+    def get_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte CloudKitCache key, or None if not found
+        """
+        return self.extracted_keys.get('CloudKitCache')
+    
+    def get_key_database_key(self) -> Optional[bytes]:
+        """
+        Get the KeyDatabase key for ItemSharingKeys.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte KeyDatabase key, or None if not found
+        """
+        return self.extracted_keys.get('KeyDatabase')
+    
+    def get_standalone_beacon_key(self) -> Optional[bytes]:
+        """
+        Get the StandAloneBeacon key for StandaloneBeacon.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte StandAloneBeacon key, or None if not found
+        """
+        # Try both spellings that might appear in keychain
+        key = self.extracted_keys.get('StandAloneBeacon')
+        if not key:
+            key = self.extracted_keys.get('StandaloneBeacon')
+        return key
     
     def get_key_by_service(self, service_name: str) -> Optional[bytes]:
         """

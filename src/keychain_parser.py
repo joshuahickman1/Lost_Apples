@@ -243,6 +243,46 @@ class KeychainParser:
                 return key
         return None
     
+    def get_cloud_storage_key(self) -> Optional[bytes]:
+        """
+        Get the CloudStorage key for CloudStorage.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte CloudStorage key, or None if not found
+        """
+        return self.keys.get('CloudStorage')
+    
+    def get_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte CloudKitCache key, or None if not found
+        """
+        return self.keys.get('CloudKitCache')
+    
+    def get_key_database_key(self) -> Optional[bytes]:
+        """
+        Get the KeyDatabase key for ItemSharingKeys.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte KeyDatabase key, or None if not found
+        """
+        return self.keys.get('KeyDatabase')
+    
+    def get_standalone_beacon_key(self) -> Optional[bytes]:
+        """
+        Get the StandaloneBeacon key for StandaloneBeacon.db decryption (iOS 16+).
+        
+        Returns:
+            The 32-byte StandaloneBeacon key, or None if not found
+        """
+        # Try both spellings that might appear in keychain
+        key = self.keys.get('StandaloneBeacon')
+        if not key:
+            key = self.keys.get('StandAloneBeacon')
+        return key
+    
     def get_key_by_service(self, service_name: str) -> Optional[bytes]:
         """
         Get a key by its service name.

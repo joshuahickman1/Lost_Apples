@@ -14,7 +14,9 @@ This GUI provides an interface to:
 9. Parse OwnerPeerTrust (people with whom beacons are shared)
 10. Export results to CSV and KML formats
 11. Decrypt Observations.db database (device observations with locations)
-12. Process full iOS extraction zip files directly
+12. Decrypt iOS 16+ databases (CloudStorage.db, CloudStorage_CKRecordCache.db,
+    ItemSharingKeys.db, StandaloneBeacon.db)
+13. Process full iOS extraction zip files directly
 
 All individual parsers can still be run independently from the command line.
 """
@@ -159,9 +161,15 @@ class SearchpartydGUI:
         # Variables for extracted data
         self.beacon_store_key: Optional[bytes] = None
         self.observations_key: Optional[bytes] = None
+        # Additional database encryption keys
+        self.cloud_storage_key: Optional[bytes] = None
+        self.cloudkit_cache_key: Optional[bytes] = None
+        self.key_database_key: Optional[bytes] = None
+        self.standalone_beacon_key: Optional[bytes] = None
         self.keychain_extractor: Optional[iOSKeychainExtractor] = None
         self.observations_db_decrypted: Optional[str] = None  # Path to decrypted Observations.db
         self.observations_wal_decrypted: Optional[str] = None  # Path to decrypted WAL file
+        self.ios16_databases_decrypted: dict = {}  # Paths to decrypted additional databases
         self.log_entries = []
         
         # Store parsed records for export
@@ -742,9 +750,34 @@ class SearchpartydGUI:
                     f.write("Key: Not found in keychain\n")
                 f.write("\n")
                 
+                # Additional Database Keys
+                f.write("Other Database Keys\n")
+                f.write("-"*40 + "\n")
+                
+                if self.cloud_storage_key:
+                    f.write(f"CloudStorage Key (hex): {self.cloud_storage_key.hex()}\n")
+                else:
+                    f.write("CloudStorage Key: Not found\n")
+                
+                if self.cloudkit_cache_key:
+                    f.write(f"CloudKitCache Key (hex): {self.cloudkit_cache_key.hex()}\n")
+                else:
+                    f.write("CloudKitCache Key: Not found\n")
+                
+                if self.key_database_key:
+                    f.write(f"KeyDatabase Key (hex): {self.key_database_key.hex()}\n")
+                else:
+                    f.write("KeyDatabase Key: Not found\n")
+                
+                if self.standalone_beacon_key:
+                    f.write(f"StandAloneBeacon Key (hex): {self.standalone_beacon_key.hex()}\n")
+                else:
+                    f.write("StandAloneBeacon Key: Not found\n")
+                f.write("\n")
+                
                 f.write("="*80 + "\n")
                 f.write("Note: These keys are required to decrypt searchpartyd records\n")
-                f.write("and the Observations.db database from this iOS extraction.\n")
+                f.write("and the encrypted databases from this iOS extraction.\n")
             
             messagebox.showinfo(
                 "Export Keys", 
@@ -772,7 +805,7 @@ Features:
 • Parse safe locations (SafeLocations)
 • Parse beacon location history (BeaconEstimatedLocation)
 • Parse shared beacons (SharedBeacons & Owner Sharing Circle)
-• Decrypt Observations.db and associated -WAL
+• Decrypt Observations.db, CloudStorage, ItemSharingKeys, StandaloneBeacon databases and associated -WAL
 • Query Observations.db with two-stage analysis (DB only / DB+WAL)
 • Process full iOS extraction zip files directly
 • Export results to CSV and KML formats
@@ -865,7 +898,12 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         # Clear previous results
         self.beacon_store_key = None
         self.observations_key = None
+        self.cloud_storage_key = None
+        self.cloudkit_cache_key = None
+        self.key_database_key = None
+        self.standalone_beacon_key = None
         self.keychain_extractor = None
+        self.ios16_databases_decrypted = {}
         self.wild_mode_records = []
         self.beacon_naming_records = []
         self.owned_beacon_records = []
@@ -1051,7 +1089,15 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             # Step 11: Decrypt Observations.db
             self._decrypt_observations_db(actual_searchpartyd_path)
             
-            # Step 12: Export decrypted plists (if enabled)
+            if not self.is_processing:
+                self._cleanup_zip()
+                self._reset_buttons()
+                return
+            
+            # Step 12: Decrypt additional databases
+            self._decrypt_ios16_databases(actual_searchpartyd_path)
+            
+            # Step 13: Export decrypted plists (if enabled)
             if self.export_plists_var.get():
                 self._export_decrypted_plists()
             
@@ -1606,6 +1652,73 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 else:
                     self._log("⚠ Observations key not found (database decryption unavailable)", "warning")
                 
+                # Extract additional database keys
+                self._log("\nChecking for additional database keys...")
+                
+                # First, try to get additional keys from the simple parser (works for Graykey)
+                # The simple KeychainParser now has accessor methods for all database keys
+                self.cloud_storage_key = parser.get_cloud_storage_key()
+                self.cloudkit_cache_key = parser.get_cloudkit_cache_key()
+                self.key_database_key = parser.get_key_database_key()
+                self.standalone_beacon_key = parser.get_standalone_beacon_key()
+                
+                # If simple parser didn't find the keys (may happen with UFED format),
+                # try the complex extractor as fallback
+                if not any([self.cloud_storage_key, self.cloudkit_cache_key, 
+                           self.key_database_key, self.standalone_beacon_key]):
+                    # Ensure we have a keychain extractor for additional keys
+                    if not self.keychain_extractor:
+                        try:
+                            self.keychain_extractor = iOSKeychainExtractor(keychain_path)
+                            self.keychain_extractor.parse()
+                        except Exception as e:
+                            self._log(f"  Note: Could not create advanced extractor: {str(e)}")
+                    
+                    # Get keys from complex extractor
+                    if self.keychain_extractor:
+                        if not self.cloud_storage_key:
+                            self.cloud_storage_key = self.keychain_extractor.get_cloud_storage_key()
+                        if not self.cloudkit_cache_key:
+                            self.cloudkit_cache_key = self.keychain_extractor.get_cloudkit_cache_key()
+                        if not self.key_database_key:
+                            self.key_database_key = self.keychain_extractor.get_key_database_key()
+                        if not self.standalone_beacon_key:
+                            self.standalone_beacon_key = self.keychain_extractor.get_standalone_beacon_key()
+                
+                # Log the results
+                if self.cloud_storage_key:
+                    self._log("✓ CloudStorage key found", "success")
+                    self._log(f"  Key (hex): {self.cloud_storage_key.hex()}")
+                    self._log(f"  Key length: {len(self.cloud_storage_key)} bytes")
+                
+                if self.cloudkit_cache_key:
+                    self._log("✓ CloudKitCache key found", "success")
+                    self._log(f"  Key (hex): {self.cloudkit_cache_key.hex()}")
+                    self._log(f"  Key length: {len(self.cloudkit_cache_key)} bytes")
+                
+                if self.key_database_key:
+                    self._log("✓ KeyDatabase key found", "success")
+                    self._log(f"  Key (hex): {self.key_database_key.hex()}")
+                    self._log(f"  Key length: {len(self.key_database_key)} bytes")
+                
+                if self.standalone_beacon_key:
+                    self._log("✓ StandaloneBeacon key found", "success")
+                    self._log(f"  Key (hex): {self.standalone_beacon_key.hex()}")
+                    self._log(f"  Key length: {len(self.standalone_beacon_key)} bytes")
+                
+                # Summary of additional keys
+                ios16_keys_found = sum([
+                    self.cloud_storage_key is not None,
+                    self.cloudkit_cache_key is not None,
+                    self.key_database_key is not None,
+                    self.standalone_beacon_key is not None
+                ])
+                
+                if ios16_keys_found > 0:
+                    self._log(f"Found {ios16_keys_found}/4 additional database keys")
+                else:
+                    self._log("⚠ No additional database keys found (may not be present in older iOS versions)", "warning")
+                
                 # Enable the Export Keys button now that we have at least one key
                 self.export_keys_btn.config(state=tk.NORMAL)
                 self._log("✓ Export Keys button is now enabled", "success")
@@ -2066,7 +2179,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             decryptor = ObservationsDecryptor(self.observations_key)
             
             # Create dedicated output folder in current directory
-            output_dir = Path.cwd() / "decrypted_observations"
+            output_dir = Path.cwd() / "decrypted_databases"
             output_dir.mkdir(parents=True, exist_ok=True)
             self._log(f"\nDecrypting to: {output_dir}")
             
@@ -2128,9 +2241,134 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             self._log(f"✗ Failed to decrypt Observations.db: {str(e)}", "error")
             self._log("  This is non-fatal - continuing with other records")
     
+    def _decrypt_ios16_databases(self, searchpartyd_path):
+        """
+        Decrypt additional databases and their WAL files (Step 12).
+        
+        iOS 16 introduced additional encrypted databases:
+        - CloudStorage.db (key: CloudStorage)
+        - CloudStorage_CKRecordCache.db (key: CloudKitCache) 
+        - ItemSharingKeys.db (key: KeyDatabase)
+        - StandaloneBeacon.db (key: StandAloneBeacon)
+        
+        These databases are stored in the same location as Observations.db
+        (the searchpartyd folder) and use the same encryption method.
+        
+        Args:
+            searchpartyd_path: Path to the searchpartyd folder
+        """
+        self.progress_var.set("Decrypting additional databases...")
+        self._log("\n--- Step 12: Decrypt Additional Databases ---", "header")
+        
+        # Check if we have any additional keys
+        ios16_keys = {
+            'CloudStorage.db': self.cloud_storage_key,
+            'CloudStorage_CKRecordCache.db': self.cloudkit_cache_key,
+            'ItemSharingKeys.db': self.key_database_key,
+            'StandaloneBeacon.db': self.standalone_beacon_key,
+        }
+        
+        # Filter to only databases we have keys for
+        available_keys = {db: key for db, key in ios16_keys.items() if key is not None}
+        
+        if not available_keys:
+            self._log("⚠ No additional database keys available - skipping", "warning")
+            self._log("  These databases are only present in iOS 16 and later")
+            return
+        
+        self._log(f"Found keys for {len(available_keys)} database(s)")
+        
+        # Look for databases in the searchpartyd folder
+        searchpartyd_path = Path(searchpartyd_path)
+        
+        # Create dedicated output folder in current directory
+        output_dir = Path.cwd() / "decrypted_databases"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._log(f"Output directory: {output_dir}")
+        
+        # Process each database
+        for db_name, key in available_keys.items():
+            self._log(f"\nProcessing {db_name}...")
+            
+            # Look for the database file
+            db_path = searchpartyd_path / db_name
+            
+            if not db_path.exists():
+                self._log(f"  ⚠ {db_name} not found in extraction", "warning")
+                continue
+            
+            self._log(f"  Found: {db_path}")
+            
+            # Check for WAL file
+            wal_path = Path(str(db_path) + "-wal")
+            wal_exists = wal_path.exists()
+            if wal_exists:
+                wal_size = wal_path.stat().st_size
+                self._log(f"  ✓ Found WAL file ({wal_size:,} bytes)")
+            
+            try:
+                # Create decryptor with the appropriate key
+                decryptor = ObservationsDecryptor(key)
+                
+                # Generate output filename (replace .db with _decrypted.db)
+                base_name = db_name.replace('.db', '')
+                output_db = output_dir / f"{base_name}_decrypted.db"
+                
+                # Decrypt database
+                self._log(f"  Decrypting main database...")
+                decryptor.decrypt_database(str(db_path), str(output_db))
+                
+                # Verify the file was created and has valid SQLite magic header
+                if output_db.exists():
+                    with open(str(output_db), 'rb') as f:
+                        header = f.read(16)
+                    if header == b'SQLite format 3\x00':
+                        db_size = output_db.stat().st_size
+                        self._log(f"  ✓ Database decrypted: {output_db.name} ({db_size:,} bytes)", "success")
+                        
+                        # Store path for later reference
+                        self.ios16_databases_decrypted[db_name] = str(output_db)
+                    else:
+                        self._log(f"  ✗ Decryption produced invalid SQLite file", "error")
+                        continue
+                else:
+                    self._log(f"  ✗ Database file not created", "error")
+                    continue
+                
+                # Decrypt WAL file if present
+                if wal_exists:
+                    output_wal = output_dir / f"{base_name}_decrypted.db-wal"
+                    self._log(f"  Decrypting WAL file...")
+                    try:
+                        success, num_frames = decryptor.decrypt_wal(str(wal_path), str(output_wal))
+                        if success and output_wal.exists():
+                            wal_decrypted_size = output_wal.stat().st_size
+                            self._log(f"  ✓ WAL decrypted: {output_wal.name} ({wal_decrypted_size:,} bytes, {num_frames} frames)", "success")
+                        else:
+                            self._log(f"  ⚠ WAL decryption may have failed", "warning")
+                    except Exception as wal_error:
+                        self._log(f"  ⚠ WAL decryption failed: {str(wal_error)}", "warning")
+                        self._log(f"    Main database was decrypted successfully")
+                
+            except Exception as e:
+                self._log(f"  ✗ Failed to decrypt {db_name}: {str(e)}", "error")
+                continue
+        
+        # Summary
+        if self.ios16_databases_decrypted:
+            self._log("\n" + "="*60, "header")
+            self._log(f"✓ Additional database decryption complete!", "success")
+            self._log("="*60, "header")
+            self._log(f"  Decrypted {len(self.ios16_databases_decrypted)} database(s):")
+            for db_name in self.ios16_databases_decrypted:
+                self._log(f"    - {db_name}")
+            self._log(f"\n  Output folder: {output_dir}")
+        else:
+            self._log("\n⚠ No additional databases were decrypted", "warning")
+    
     def _export_decrypted_plists(self):
         """
-        Export decrypted binary plist files from parsed records (Step 12).
+        Export decrypted binary plist files from parsed records (Step 13).
         
         Creates a folder structure mirroring the original searchpartyd folder:
         decrypted_plists/
@@ -2142,7 +2380,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         Each plist file uses the same UUID as its source .record file.
         """
         self.progress_var.set("Exporting decrypted plists...")
-        self._log("\n--- Step 12: Export Decrypted Plist Files ---", "header")
+        self._log("\n--- Step 13: Export Decrypted Plist Files ---", "header")
         
         try:
             # Create exporter (uses current working directory by default)
@@ -2495,7 +2733,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         # Note about preserved files
         note_label = ttk.Label(
             main_frame,
-            text="Note: Decrypted database and WAL files are in 'decrypted_observations' folder.\n"
+            text="Note: Decrypted database and WAL files are in 'decrypted_databases' folder.\n"
                  "Query results (CSV/KML) are saved to 'observations_db_query_output' folder.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray"
