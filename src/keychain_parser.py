@@ -22,7 +22,7 @@ from typing import Dict, Optional, List
 
 
 class KeychainParser:
-    """Parser for extracting searchpartyd keys from keychain plist files."""
+    """Parser for extracting searchpartyd and findmylocated keys from keychain plist files."""
     
     # Target services we want to extract
     TARGET_SERVICES = {
@@ -34,7 +34,13 @@ class KeychainParser:
         'SPBeaconKeyManager': ['SPBeaconKeyManager'],
         'LocalStorage': ['LocalStorage'],
         'CachedUnifiedBeacons': ['CachedUnifiedBeacons'],
+        'CloudKitCache': ['CloudKitCache'],
     }
+    
+    # Access groups we want to process
+    # searchpartyd: com.apple.icloud.searchpartyd folder databases
+    # findmylocated: com.apple.findmy.findmylocated folder databases (iOS 17+)
+    TARGET_ACCESS_GROUPS = ['searchpartyd', 'findmylocated']
     
     def __init__(self, keychain_path: str):
         """
@@ -117,9 +123,11 @@ class KeychainParser:
         Extract key from a Graykey keychain entry.
         
         Graykey format stores keys directly:
-        - svce: Service name (BeaconStore, Observations, etc.)
+        - svce: Service name (BeaconStore, Observations, CloudStorage, etc.)
         - acct: Account name
-        - agrp: Access group (should be com.apple.icloud.searchpartyd)
+        - agrp: Access group determines the folder:
+            - com.apple.icloud.searchpartyd.* -> searchpartyd folder
+            - com.apple.findmy.findmylocated -> findmylocated folder (iOS 17+)
         - v_Data: The actual key (iOS 17.5+)
         - gena: The actual key (older iOS)
         
@@ -139,8 +147,12 @@ class KeychainParser:
         if isinstance(acct, bytes):
             acct = acct.decode('utf-8', errors='ignore')
         
-        # Only process entries from searchpartyd access group
-        if 'searchpartyd' not in agrp:
+        # Only process entries from our target access groups (searchpartyd or findmylocated)
+        agrp_lower = agrp.lower()
+        is_searchpartyd = 'searchpartyd' in agrp_lower
+        is_findmylocated = 'findmylocated' in agrp_lower
+        
+        if not is_searchpartyd and not is_findmylocated:
             return
         
         # Get the key data
@@ -163,10 +175,26 @@ class KeychainParser:
             return
         
         # Store the key by service name
+        # For services that exist in BOTH folders (CloudStorage, CloudKitCache),
+        # we use folder-specific key names to distinguish them
         if svce:
-            self.keys[svce] = key_data
+            svce_lower = svce.lower()
             
-            # Also store with common aliases
+            # Services that exist in both searchpartyd and findmylocated folders
+            dual_folder_services = ['cloudstorage', 'cloudkitcache']
+            
+            if any(svc in svce_lower for svc in dual_folder_services):
+                # Use folder-specific naming
+                if is_findmylocated:
+                    key_name = f"{svce}_findmylocated"
+                else:
+                    key_name = f"{svce}_searchpartyd"
+                self.keys[key_name] = key_data
+            else:
+                # Standard service - store with original name
+                self.keys[svce] = key_data
+            
+            # Also store with common aliases for frequently used keys
             if svce == 'BeaconStore':
                 self.keys['BeaconStoreKey'] = key_data
             elif svce == 'Observations':
@@ -282,6 +310,64 @@ class KeychainParser:
         if not key:
             key = self.keys.get('StandAloneBeacon')
         return key
+    
+    # =========================================================================
+    # FINDMYLOCATED FOLDER (com.apple.findmy.findmylocated) - iOS 17+ Keys
+    # =========================================================================
+    
+    def get_local_storage_key(self) -> Optional[bytes]:
+        """
+        Get the LocalStorage key for LocalStorage.db decryption (iOS 17+).
+        Located in: com.apple.findmy.findmylocated folder
+        
+        Returns:
+            The 32-byte LocalStorage key, or None if not found
+        """
+        return self.keys.get('LocalStorage')
+    
+    def get_findmylocated_cloud_storage_key(self) -> Optional[bytes]:
+        """
+        Get the CloudStorage key for CloudStorage.db in the findmylocated folder.
+        Located in: com.apple.findmy.findmylocated folder (iOS 17+)
+        
+        Returns:
+            The 32-byte CloudStorage key for findmylocated, or None if not found
+        """
+        return self.keys.get('CloudStorage_findmylocated')
+    
+    def get_findmylocated_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db in the findmylocated folder.
+        Located in: com.apple.findmy.findmylocated folder (iOS 17+)
+        
+        Returns:
+            The 32-byte CloudKitCache key for findmylocated, or None if not found
+        """
+        return self.keys.get('CloudKitCache_findmylocated')
+    
+    # =========================================================================
+    # SEARCHPARTYD FOLDER (com.apple.icloud.searchpartyd) - Folder-Specific Keys  
+    # =========================================================================
+    
+    def get_searchpartyd_cloud_storage_key(self) -> Optional[bytes]:
+        """
+        Get the CloudStorage key for CloudStorage.db in the searchpartyd folder.
+        Located in: com.apple.icloud.searchpartyd folder
+        
+        Returns:
+            The 32-byte CloudStorage key for searchpartyd, or None if not found
+        """
+        return self.keys.get('CloudStorage_searchpartyd')
+    
+    def get_searchpartyd_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db in the searchpartyd folder.
+        Located in: com.apple.icloud.searchpartyd folder
+        
+        Returns:
+            The 32-byte CloudKitCache key for searchpartyd, or None if not found
+        """
+        return self.keys.get('CloudKitCache_searchpartyd')
     
     def get_key_by_service(self, service_name: str) -> Optional[bytes]:
         """

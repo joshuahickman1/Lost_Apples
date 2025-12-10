@@ -13,7 +13,7 @@ For more information see the blog The Binary Hick:
 
 ---
 
-## Features
+## Key Features
 
 - **Keychain Parsing**: Automatically extracts the BeaconStore and Observations encryption keys from iOS keychain files
 - **Multi-Record Type Parsing**: Supports multiple different record types from the searchpartyd folder
@@ -23,6 +23,7 @@ For more information see the blog The Binary Hick:
 - **Beacon Name Enrichment**: Links custom beacon names and emojis across related records
 - **File Integrity**: Preserves original files while creating separate decrypted copies
 - **Cross-Platform**: Works on macOS and Windows
+- **FindMy Devices & Friends**: Decrypt databases that contain information on FindMy devices on the iCloud account & FindMy friends
 
 ---
 
@@ -40,9 +41,12 @@ For more information see the blog The Binary Hick:
 | **OwnerPeerTrust** | Peer sharing relationships | People with whom beacons are shared |
 | **Observations.db** | SQLite database | Locations of the iOS device when FindMy devices are observed |
 | **ItemSharingKeys.db** | SQLite database | Pre-determined near-owner advertisements for items shared with the device being examined |
-| **CloudStorage.db** | SQLite database | TBD |
-| **CloudStorage_CKRecordCache.db** | SQLite database | TBD |
-| **StandaloneBeacond.db** | SQLite database | TBD |
+| **CloudStorage.db (searchparty)** | SQLite database | TBD |
+| **CloudStorage_CKRecordCache.db (searchparty)** | SQLite database | TBD |
+| **StandaloneBeacon.db** | SQLite database | TBD |
+| **LocalStorage.db** | SQLite database | FindMy friends and FindMy devices registered to the iCloud account on the device |
+| **CloudStorage.db (findmy)** | SQLite database | Shared secrets for FindMy friends
+| **CloudStorage_CKRecordCache.db (findmy)** | SQLite database | TBD |
 
 ---
 

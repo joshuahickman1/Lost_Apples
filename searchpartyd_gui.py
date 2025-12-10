@@ -133,6 +133,7 @@ from src.unified_zip_handler import UnifiedZipHandler, is_zip_file
 from src.observations_decryptor import ObservationsDecryptor
 from src.observations_query_handler import ObservationsQueryHandler
 from src.plist_exporter import PlistExporter
+from src.findmylocated_decryptor import FindMyLocatedDecryptor
 
 
 class SearchpartydGUI:
@@ -157,6 +158,7 @@ class SearchpartydGUI:
         # Zip file handling
         self.zip_handler: Optional[UnifiedZipHandler] = None
         self.using_zip = False
+        self.actual_findmylocated_path: Optional[str] = None  # Path to findmylocated folder (zip or direct)
         
         # Variables for extracted data
         self.beacon_store_key: Optional[bytes] = None
@@ -166,10 +168,15 @@ class SearchpartydGUI:
         self.cloudkit_cache_key: Optional[bytes] = None
         self.key_database_key: Optional[bytes] = None
         self.standalone_beacon_key: Optional[bytes] = None
+        # FindMyLocated folder keys (iOS 17+)
+        self.local_storage_key: Optional[bytes] = None
+        self.findmylocated_cloud_storage_key: Optional[bytes] = None
+        self.findmylocated_cloudkit_cache_key: Optional[bytes] = None
         self.keychain_extractor: Optional[iOSKeychainExtractor] = None
         self.observations_db_decrypted: Optional[str] = None  # Path to decrypted Observations.db
         self.observations_wal_decrypted: Optional[str] = None  # Path to decrypted WAL file
         self.ios16_databases_decrypted: dict = {}  # Paths to decrypted additional databases
+        self.findmylocated_databases_decrypted: dict = {}  # Paths to decrypted findmylocated databases
         self.log_entries = []
         
         # Store parsed records for export
@@ -902,8 +909,14 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         self.cloudkit_cache_key = None
         self.key_database_key = None
         self.standalone_beacon_key = None
+        # FindMyLocated folder keys (iOS 17+)
+        self.local_storage_key = None
+        self.findmylocated_cloud_storage_key = None
+        self.findmylocated_cloudkit_cache_key = None
         self.keychain_extractor = None
         self.ios16_databases_decrypted = {}
+        self.findmylocated_databases_decrypted = {}
+        self.actual_findmylocated_path = None
         self.wild_mode_records = []
         self.beacon_naming_records = []
         self.owned_beacon_records = []
@@ -979,6 +992,13 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     
                     self._log(f"✓ Searchpartyd extracted to: {actual_searchpartyd_path}", "success")
                     
+                    # Get findmylocated path if it exists (iOS 17+)
+                    self.actual_findmylocated_path = self.zip_handler.get_findmylocated_path()
+                    if self.actual_findmylocated_path:
+                        self._log(f"✓ FindMyLocated folder extracted to: {self.actual_findmylocated_path}", "success")
+                    else:
+                        self._log("  FindMyLocated folder not found (may not exist or iOS < 17)")
+                    
                     # Handle keychain (UFED only, but unified handler returns None for Graykey)
                     if actual_keychain_path:
                         self._log(f"✓ Keychain extracted to: {actual_keychain_path}", "success")
@@ -1006,6 +1026,16 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             else:
                 actual_searchpartyd_path = searchpartyd_input
                 self._log(f"\nUsing folder: {actual_searchpartyd_path}")
+                
+                # Check for findmylocated folder (sibling to searchpartyd)
+                searchpartyd_path_obj = Path(actual_searchpartyd_path)
+                parent_dir = searchpartyd_path_obj.parent
+                findmylocated_folder = parent_dir / "com.apple.findmy.findmylocated"
+                if findmylocated_folder.exists():
+                    self.actual_findmylocated_path = str(findmylocated_folder)
+                    self._log(f"Found FindMyLocated folder: {self.actual_findmylocated_path}")
+                else:
+                    self._log("  FindMyLocated folder not found (may not exist or iOS < 17)")
             
             # Step 1: Extract BeaconStore key
             if not self._extract_beacon_key():
@@ -1094,10 +1124,18 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 self._reset_buttons()
                 return
             
-            # Step 12: Decrypt additional databases
+            # Step 12: Decrypt additional databases (searchpartyd folder)
             self._decrypt_ios16_databases(actual_searchpartyd_path)
             
-            # Step 13: Export decrypted plists (if enabled)
+            if not self.is_processing:
+                self._cleanup_zip()
+                self._reset_buttons()
+                return
+            
+            # Step 13: Decrypt FindMyLocated databases (iOS 17+)
+            self._decrypt_findmylocated_databases()
+            
+            # Step 14: Export decrypted plists (if enabled)
             if self.export_plists_var.get():
                 self._export_decrypted_plists()
             
@@ -1677,9 +1715,9 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     # Get keys from complex extractor
                     if self.keychain_extractor:
                         if not self.cloud_storage_key:
-                            self.cloud_storage_key = self.keychain_extractor.get_cloud_storage_key()
+                            self.cloud_storage_key = self.keychain_extractor.get_searchpartyd_cloud_storage_key()
                         if not self.cloudkit_cache_key:
-                            self.cloudkit_cache_key = self.keychain_extractor.get_cloudkit_cache_key()
+                            self.cloudkit_cache_key = self.keychain_extractor.get_searchpartyd_cloudkit_cache_key()
                         if not self.key_database_key:
                             self.key_database_key = self.keychain_extractor.get_key_database_key()
                         if not self.standalone_beacon_key:
@@ -1718,6 +1756,51 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     self._log(f"Found {ios16_keys_found}/4 additional database keys")
                 else:
                     self._log("⚠ No additional database keys found (may not be present in older iOS versions)", "warning")
+                
+                # Extract FindMyLocated folder keys (iOS 17+)
+                # These are for the com.apple.findmy.findmylocated folder databases
+                self._log("\nChecking for FindMyLocated folder keys (iOS 17+)...")
+                
+                # First try simple parser (works for Graykey format)
+                self.local_storage_key = parser.get_local_storage_key()
+                self.findmylocated_cloud_storage_key = parser.get_findmylocated_cloud_storage_key()
+                self.findmylocated_cloudkit_cache_key = parser.get_findmylocated_cloudkit_cache_key()
+                
+                # If simple parser didn't find the keys (may happen with UFED format),
+                # try the complex extractor as fallback
+                if not any([self.local_storage_key, self.findmylocated_cloud_storage_key,
+                           self.findmylocated_cloudkit_cache_key]):
+                    if self.keychain_extractor:
+                        if not self.local_storage_key:
+                            self.local_storage_key = self.keychain_extractor.get_local_storage_key()
+                        if not self.findmylocated_cloud_storage_key:
+                            self.findmylocated_cloud_storage_key = self.keychain_extractor.get_findmylocated_cloud_storage_key()
+                        if not self.findmylocated_cloudkit_cache_key:
+                            self.findmylocated_cloudkit_cache_key = self.keychain_extractor.get_findmylocated_cloudkit_cache_key()
+                
+                # Log the results
+                if self.local_storage_key:
+                    self._log("✓ LocalStorage key found (findmylocated)", "success")
+                    self._log(f"  Key (hex): {self.local_storage_key.hex()}")
+                
+                if self.findmylocated_cloud_storage_key:
+                    self._log("✓ CloudStorage key found (findmylocated)", "success")
+                    self._log(f"  Key (hex): {self.findmylocated_cloud_storage_key.hex()}")
+                
+                if self.findmylocated_cloudkit_cache_key:
+                    self._log("✓ CloudKitCache key found (findmylocated)", "success")
+                    self._log(f"  Key (hex): {self.findmylocated_cloudkit_cache_key.hex()}")
+                
+                findmylocated_keys_found = sum([
+                    self.local_storage_key is not None,
+                    self.findmylocated_cloud_storage_key is not None,
+                    self.findmylocated_cloudkit_cache_key is not None
+                ])
+                
+                if findmylocated_keys_found > 0:
+                    self._log(f"Found {findmylocated_keys_found}/3 FindMyLocated folder keys")
+                else:
+                    self._log("⚠ No FindMyLocated keys found (folder may not exist or iOS < 17)", "warning")
                 
                 # Enable the Export Keys button now that we have at least one key
                 self.export_keys_btn.config(state=tk.NORMAL)
@@ -2179,7 +2262,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             decryptor = ObservationsDecryptor(self.observations_key)
             
             # Create dedicated output folder in current directory
-            output_dir = Path.cwd() / "decrypted_databases"
+            output_dir = Path.cwd() / "decrypted_searchparty_databases"
             output_dir.mkdir(parents=True, exist_ok=True)
             self._log(f"\nDecrypting to: {output_dir}")
             
@@ -2282,7 +2365,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         searchpartyd_path = Path(searchpartyd_path)
         
         # Create dedicated output folder in current directory
-        output_dir = Path.cwd() / "decrypted_databases"
+        output_dir = Path.cwd() / "decrypted_searchparty_databases"
         output_dir.mkdir(parents=True, exist_ok=True)
         self._log(f"Output directory: {output_dir}")
         
@@ -2366,9 +2449,137 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         else:
             self._log("\n⚠ No additional databases were decrypted", "warning")
     
+    def _decrypt_findmylocated_databases(self):
+        """
+        Decrypt databases in the findmylocated folder (Step 13).
+        
+        iOS 17+ introduced com.apple.findmy.findmylocated folder with:
+        - LocalStorage.db (device information, friends)
+        - CloudStorage.db (fences, shared secrets)
+        - CloudStorage_CKRecordCache.db (CloudKit sync data)
+        
+        These use the same encryption method as searchpartyd databases.
+        """
+        self.progress_var.set("Decrypting FindMyLocated databases...")
+        self._log("\n--- Step 13: Decrypt FindMyLocated Databases (iOS 17+) ---", "header")
+        
+        # Check if we have the findmylocated path
+        if not self.actual_findmylocated_path:
+            self._log("⚠ FindMyLocated folder not found - skipping", "warning")
+            self._log("  This folder is only present in iOS 17 and later")
+            return
+        
+        self._log(f"FindMyLocated folder: {self.actual_findmylocated_path}")
+        
+        # Check if we have any findmylocated keys
+        findmylocated_keys = {
+            'LocalStorage.db': self.local_storage_key,
+            'CloudStorage.db': self.findmylocated_cloud_storage_key,
+            'CloudStorage_CKRecordCache.db': self.findmylocated_cloudkit_cache_key,
+        }
+        
+        # Filter to only databases we have keys for
+        available_keys = {db: key for db, key in findmylocated_keys.items() if key is not None}
+        
+        if not available_keys:
+            self._log("⚠ No FindMyLocated database keys available - skipping", "warning")
+            self._log("  Keys may not be present in this extraction")
+            return
+        
+        self._log(f"Found keys for {len(available_keys)} database(s)")
+        
+        # Look for databases in the findmylocated folder
+        findmylocated_path = Path(self.actual_findmylocated_path)
+        
+        # Create dedicated output folder in current directory
+        output_dir = Path.cwd() / "decrypted_findmylocated_databases"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._log(f"Output directory: {output_dir}")
+        
+        # Process each database
+        for db_name, key in available_keys.items():
+            self._log(f"\nProcessing {db_name}...")
+            
+            # Look for the database file
+            db_path = findmylocated_path / db_name
+            
+            if not db_path.exists():
+                self._log(f"  ⚠ {db_name} not found in extraction", "warning")
+                continue
+            
+            self._log(f"  Found: {db_path}")
+            
+            # Check for WAL file
+            wal_path = Path(str(db_path) + "-wal")
+            wal_exists = wal_path.exists()
+            if wal_exists:
+                wal_size = wal_path.stat().st_size
+                self._log(f"  ✓ Found WAL file ({wal_size:,} bytes)")
+            
+            try:
+                # Create decryptor with the appropriate key
+                # Use ObservationsDecryptor since it handles the same encryption format
+                decryptor = ObservationsDecryptor(key)
+                
+                # Generate output filename (replace .db with _decrypted.db)
+                base_name = db_name.replace('.db', '')
+                output_db = output_dir / f"{base_name}_decrypted.db"
+                
+                # Decrypt database
+                self._log(f"  Decrypting main database...")
+                decryptor.decrypt_database(str(db_path), str(output_db))
+                
+                # Verify the file was created and has valid SQLite magic header
+                if output_db.exists():
+                    with open(str(output_db), 'rb') as f:
+                        header = f.read(16)
+                    if header == b'SQLite format 3\x00':
+                        db_size = output_db.stat().st_size
+                        self._log(f"  ✓ Database decrypted: {output_db.name} ({db_size:,} bytes)", "success")
+                        
+                        # Store path for later reference
+                        self.findmylocated_databases_decrypted[db_name] = str(output_db)
+                    else:
+                        self._log(f"  ✗ Decryption produced invalid SQLite file", "error")
+                        continue
+                else:
+                    self._log(f"  ✗ Database file not created", "error")
+                    continue
+                
+                # Decrypt WAL file if present
+                if wal_exists:
+                    output_wal = output_dir / f"{base_name}_decrypted.db-wal"
+                    self._log(f"  Decrypting WAL file...")
+                    try:
+                        success, num_frames = decryptor.decrypt_wal(str(wal_path), str(output_wal))
+                        if success and output_wal.exists():
+                            wal_decrypted_size = output_wal.stat().st_size
+                            self._log(f"  ✓ WAL decrypted: {output_wal.name} ({wal_decrypted_size:,} bytes, {num_frames} frames)", "success")
+                        else:
+                            self._log(f"  ⚠ WAL decryption may have failed", "warning")
+                    except Exception as wal_error:
+                        self._log(f"  ⚠ WAL decryption failed: {str(wal_error)}", "warning")
+                        self._log(f"    Main database was decrypted successfully")
+                
+            except Exception as e:
+                self._log(f"  ✗ Failed to decrypt {db_name}: {str(e)}", "error")
+                continue
+        
+        # Summary
+        if self.findmylocated_databases_decrypted:
+            self._log("\n" + "="*60, "header")
+            self._log(f"✓ FindMyLocated database decryption complete!", "success")
+            self._log("="*60, "header")
+            self._log(f"  Decrypted {len(self.findmylocated_databases_decrypted)} database(s):")
+            for db_name in self.findmylocated_databases_decrypted:
+                self._log(f"    - {db_name}")
+            self._log(f"\n  Output folder: {output_dir}")
+        else:
+            self._log("\n⚠ No FindMyLocated databases were decrypted", "warning")
+    
     def _export_decrypted_plists(self):
         """
-        Export decrypted binary plist files from parsed records (Step 13).
+        Export decrypted binary plist files from parsed records (Step 14).
         
         Creates a folder structure mirroring the original searchpartyd folder:
         decrypted_plists/
@@ -2380,7 +2591,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         Each plist file uses the same UUID as its source .record file.
         """
         self.progress_var.set("Exporting decrypted plists...")
-        self._log("\n--- Step 13: Export Decrypted Plist Files ---", "header")
+        self._log("\n--- Step 14: Export Decrypted Plist Files ---", "header")
         
         try:
             # Create exporter (uses current working directory by default)
@@ -2733,7 +2944,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         # Note about preserved files
         note_label = ttk.Label(
             main_frame,
-            text="Note: Decrypted database and WAL files are in 'decrypted_databases' folder.\n"
+            text="Note: Decrypted database and WAL files are in 'decrypted_searchparty_databases' folder.\n"
                  "Query results (CSV/KML) are saved to 'observations_db_query_output' folder.",
             font=("TkDefaultFont", 8, "italic"),
             foreground="gray"

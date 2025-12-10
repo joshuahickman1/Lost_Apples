@@ -52,6 +52,7 @@ class UnifiedZipHandler:
         
         self.temp_dir = None
         self.searchpartyd_path = None
+        self.findmylocated_path = None  # Path to com.apple.findmy.findmylocated
         self.keychain_path = None
         self.zip_type = None  # Will be 'UFED' or 'Graykey'
         
@@ -201,6 +202,86 @@ class UnifiedZipHandler:
             
             return None
     
+    def _find_findmylocated_in_ufed(self) -> Optional[str]:
+        """
+        Find findmylocated folder within UFED filesystem folders.
+        This folder contains iOS 17+ FindMy device tracking databases.
+        
+        Returns:
+            Internal zip path to findmylocated folder, or None
+        """
+        filesystem_folders = self._find_filesystem_folders_ufed()
+        
+        if not filesystem_folders:
+            return None
+        
+        with zipfile.ZipFile(self.zip_path, 'r') as zf:
+            all_paths = zf.namelist()
+            
+            # Search each filesystem folder for findmylocated
+            for fs_folder in filesystem_folders:
+                for path in all_paths:
+                    # Skip CloudKit cache paths
+                    if 'Caches' in path or 'CloudKit' in path:
+                        continue
+                    
+                    # Check if path starts with this filesystem folder
+                    if path.lower().startswith(fs_folder.lower() + '/'):
+                        # Check for Library/com.apple.findmy.findmylocated pattern
+                        if '/library/com.apple.findmy.findmylocated/' in path.lower():
+                            # Extract the path up to and including findmylocated
+                            parts = PurePosixPath(path).parts
+                            
+                            for i, part in enumerate(parts):
+                                if part.lower() == 'library':
+                                    if i + 1 < len(parts) and parts[i + 1].lower() == 'com.apple.findmy.findmylocated':
+                                        # Return path including findmylocated
+                                        return '/'.join(parts[:i+2])
+            
+            return None
+    
+    def _find_findmylocated_graykey(self) -> Optional[str]:
+        """
+        Find findmylocated folder in Graykey zip (Library as direct parent).
+        This folder contains iOS 17+ FindMy device tracking databases.
+        
+        Returns:
+            Internal zip path to findmylocated folder, or None
+        """
+        with zipfile.ZipFile(self.zip_path, 'r') as zf:
+            all_paths = zf.namelist()
+            
+            # Look for com.apple.findmy.findmylocated folders
+            findmylocated_folders = [
+                path for path in all_paths 
+                if 'com.apple.findmy.findmylocated' in path.lower()
+            ]
+            
+            # Filter for ones with Library as DIRECT parent (not CloudKit cache)
+            for folder_path in findmylocated_folders:
+                parts = PurePosixPath(folder_path).parts
+                
+                # Skip CloudKit cache paths
+                if any(p.lower() in ['caches', 'cloudkit'] for p in parts):
+                    continue
+                
+                # Look for Library in the path hierarchy
+                for i, part in enumerate(parts):
+                    if part.lower() == 'library':
+                        # Check if com.apple.findmy.findmylocated comes IMMEDIATELY after Library
+                        if i + 1 < len(parts) and parts[i + 1].lower() == 'com.apple.findmy.findmylocated':
+                            # Found it! Return the path up to and including findmylocated
+                            findmylocated_index = i + 2
+                            path_parts = parts[:findmylocated_index]
+                            
+                            # If first part is '/', join with '/' to maintain absolute path
+                            if path_parts[0] == '/':
+                                return '/' + '/'.join(path_parts[1:])
+                            else:
+                                return '/'.join(path_parts)
+            
+            return None
+    
     def _find_keychain_ufed(self) -> Optional[str]:
         """
         Find keychain file in UFED zip (in extra/KeychainDump/).
@@ -267,22 +348,28 @@ class UnifiedZipHandler:
     
     def extract_all(self) -> Tuple[Optional[str], Optional[str]]:
         """
-        Extract searchpartyd folder (and keychain if UFED) to temporary location.
+        Extract searchpartyd folder, findmylocated folder, and keychain to temporary location.
         
         Returns:
             Tuple of (searchpartyd_path, keychain_path)
-            Both are None if not found, keychain_path is None for Graykey
+            Both are None if searchpartyd not found, keychain_path is None for Graykey
+            
+        Note:
+            findmylocated_path is stored in self.findmylocated_path after extraction
+            Use get_findmylocated_path() to retrieve it
         """
         # Detect zip type if not already done
         if not self.zip_type:
             self.detect_zip_type()
         
-        # Find searchpartyd folder based on zip type
+        # Find folders based on zip type
         if self.zip_type == 'UFED':
             internal_searchpartyd = self._find_searchpartyd_in_ufed()
+            internal_findmylocated = self._find_findmylocated_in_ufed()
             internal_keychain = self._find_keychain_ufed()
         else:  # Graykey
             internal_searchpartyd = self._find_searchpartyd_graykey()
+            internal_findmylocated = self._find_findmylocated_graykey()
             internal_keychain = None
         
         if not internal_searchpartyd:
@@ -295,13 +382,21 @@ class UnifiedZipHandler:
         temp_base.mkdir(exist_ok=True)
         self.temp_dir = Path(tempfile.mkdtemp(prefix='extraction_', dir=str(temp_base)))
         
-        # Extract searchpartyd folder
+        # Extract folders
         with zipfile.ZipFile(self.zip_path, 'r') as zf:
             # Get all files in or under the searchpartyd folder
             files_to_extract = [
                 name for name in zf.namelist()
                 if name.startswith(internal_searchpartyd)
             ]
+            
+            # Also get files for findmylocated if it exists
+            if internal_findmylocated:
+                findmylocated_files = [
+                    name for name in zf.namelist()
+                    if name.startswith(internal_findmylocated)
+                ]
+                files_to_extract.extend(findmylocated_files)
             
             # Extract all relevant files
             for file_path in files_to_extract:
@@ -329,6 +424,24 @@ class UnifiedZipHandler:
             print(f"Warning: Extracted searchpartyd path does not exist: {self.searchpartyd_path}")
             return None, None
         
+        # Build findmylocated path if it exists
+        if internal_findmylocated:
+            findmylocated_posix = PurePosixPath(internal_findmylocated)
+            findmylocated_parts = findmylocated_posix.parts
+            
+            # Remove leading slash if present
+            if findmylocated_parts and findmylocated_parts[0] == '/':
+                findmylocated_parts = findmylocated_parts[1:]
+            
+            # Build platform-specific path
+            self.findmylocated_path = self.temp_dir
+            for part in findmylocated_parts:
+                self.findmylocated_path = self.findmylocated_path / part
+            
+            # Verify findmylocated exists
+            if not self.findmylocated_path.exists():
+                self.findmylocated_path = None
+        
         # Build keychain path if it exists
         if internal_keychain:
             keychain_posix = PurePosixPath(internal_keychain)
@@ -352,6 +465,22 @@ class UnifiedZipHandler:
             str(self.keychain_path.resolve()) if self.keychain_path else None
         )
     
+    def get_findmylocated_path(self) -> Optional[str]:
+        """
+        Get the extracted findmylocated folder path.
+        
+        This folder contains iOS 17+ FindMy device tracking databases:
+        - LocalStorage.db
+        - CloudStorage.db
+        - CloudStorage_CKRecordCache.db
+        
+        Returns:
+            Path to extracted findmylocated folder, or None if not found
+        """
+        if self.findmylocated_path and self.findmylocated_path.exists():
+            return str(self.findmylocated_path.resolve())
+        return None
+    
     def get_info(self) -> dict:
         """
         Get information about the zip file without extracting.
@@ -360,6 +489,7 @@ class UnifiedZipHandler:
             Dictionary with zip information:
             - zip_type: 'UFED' or 'Graykey'
             - has_searchpartyd: bool
+            - has_findmylocated: bool (iOS 17+ folder)
             - has_keychain: bool (UFED only)
             - filesystem_folders: list (UFED only)
         """
@@ -370,6 +500,7 @@ class UnifiedZipHandler:
         info = {
             'zip_type': self.zip_type,
             'has_searchpartyd': False,
+            'has_findmylocated': False,
             'has_keychain': False,
             'filesystem_folders': []
         }
@@ -377,9 +508,11 @@ class UnifiedZipHandler:
         if self.zip_type == 'UFED':
             info['filesystem_folders'] = self._find_filesystem_folders_ufed()
             info['has_searchpartyd'] = self._find_searchpartyd_in_ufed() is not None
+            info['has_findmylocated'] = self._find_findmylocated_in_ufed() is not None
             info['has_keychain'] = self._find_keychain_ufed() is not None
         else:  # Graykey
             info['has_searchpartyd'] = self._find_searchpartyd_graykey() is not None
+            info['has_findmylocated'] = self._find_findmylocated_graykey() is not None
         
         return info
     
@@ -389,6 +522,7 @@ class UnifiedZipHandler:
             shutil.rmtree(self.temp_dir)
             self.temp_dir = None
             self.searchpartyd_path = None
+            self.findmylocated_path = None
             self.keychain_path = None
             
             # Clean up temp base directory if empty

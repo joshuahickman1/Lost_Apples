@@ -42,6 +42,7 @@ class KeychainEntry:
         self.metadata_plaintext: Optional[bytes] = None
         self.actual_key: Optional[bytes] = None
         self.service_name: Optional[str] = None
+        self.access_group: Optional[str] = None  # agrp field for folder distinction
         
     def __repr__(self):
         return f"KeychainEntry(rowID={self.row_id}, classKeyIdx={self.class_key_idx}, table={self.table})"
@@ -110,8 +111,12 @@ class iOSKeychainExtractor:
                     
                     # If we successfully extracted a key, store it
                     if entry.service_name and entry.actual_key:
-                        self.extracted_keys[entry.service_name] = entry.actual_key
-                        print(f"  ✓ Extracted key for service: {entry.service_name}")
+                        # Determine the storage key name
+                        # For CloudStorage and CloudKitCache, we need folder-specific names
+                        # because both searchpartyd and findmylocated folders have these databases
+                        storage_key = self._get_storage_key_name(entry.service_name, entry.access_group)
+                        self.extracted_keys[storage_key] = entry.actual_key
+                        print(f"  ✓ Extracted key for service: {storage_key}")
                         
             except Exception as e:
                 # Continue processing other entries if one fails
@@ -168,18 +173,28 @@ class iOSKeychainExtractor:
             if not entry.metadata_content:
                 return False
             
-            # Extract service name from metadata
+            # Extract service name and access group from metadata
             entry.service_name = self._get_service_name(entry.metadata_content)
+            entry.access_group = self._get_access_group(entry.metadata_content)
             
             # Only continue if this is a service we care about
             # Services: BeaconStore, Observations, and other searchpartyd-related services
-            # iOS 16+ adds additional encrypted databases with their own keys:
-            #   - CloudStorage.db uses CloudStorage key
-            #   - CloudStorage_CKRecordCache.db uses CloudKitCache key  
+            # 
+            # Databases in com.apple.icloud.searchpartyd folder:
+            #   - CloudStorage.db uses CloudStorage key (agrp: searchpartyd-baa-fmna-group)
+            #   - CloudStorage_CKRecordCache.db uses CloudKitCache key (agrp: searchpartyd-baa-fmna-group)
             #   - ItemSharingKeys.db uses KeyDatabase key
             #   - StandaloneBeacon.db uses StandAloneBeacon key
+            #   - Observations.db uses Observations key
+            #
+            # Databases in com.apple.findmy.findmylocated folder (iOS 17+):
+            #   - CloudStorage.db uses CloudStorage key (agrp: com.apple.findmy.findmylocated)
+            #   - CloudStorage_CKRecordCache.db uses CloudKitCache key (agrp: com.apple.findmy.findmylocated)
+            #   - LocalStorage.db uses LocalStorage key (agrp: com.apple.findmy.findmylocated)
+            #
             target_services = ['beaconstore', 'observations', 'keydatabase', 'cloudstorage', 
-                              'cloudkitcache', 'itemsharingkeys', 'standalonbeacon', 'standalonebeacon', 'beacon']
+                              'cloudkitcache', 'itemsharingkeys', 'standalonbeacon', 'standalonebeacon', 
+                              'beacon', 'localstorage']
             if not entry.service_name:
                 return False
             
@@ -460,6 +475,18 @@ class iOSKeychainExtractor:
                         metadata['acct'] = clean
                         break
             
+            # Also look for agrp field (access group) - important for folder distinction
+            if 'agrp' in text:
+                agrp_idx = text.find('agrp')
+                section = text[agrp_idx+4:agrp_idx+100]
+                parts = section.replace('\x00', '|').replace('\x0c', '|').split('|')
+                for part in parts:
+                    clean = ''.join(c for c in part if c.isprintable() and c not in '\x00\x0c')
+                    # Access groups often start with 'com.' or 'searchpartyd'
+                    if len(clean) > 5 and len(clean) < 80 and ('.' in clean or 'searchpartyd' in clean.lower()):
+                        metadata['agrp'] = clean
+                        break
+            
         except Exception:
             pass
         
@@ -485,6 +512,67 @@ class iOSKeychainExtractor:
         
         return None
     
+    def _get_access_group(self, metadata_dict: dict) -> Optional[str]:
+        """
+        Extract the access group (agrp) from metadata dictionary.
+        
+        The access group is used to distinguish keys that belong to different folders:
+        - searchpartyd-baa-fmna-group: com.apple.icloud.searchpartyd folder
+        - com.apple.findmy.findmylocated: com.apple.findmy.findmylocated folder
+        
+        Args:
+            metadata_dict: Parsed metadata dictionary
+            
+        Returns:
+            Access group string, or None if not found
+        """
+        for key in ['agrp', 'accessGroup', 'access_group']:
+            if key in metadata_dict:
+                value = metadata_dict[key]
+                if isinstance(value, bytes):
+                    return value.decode('utf-8', errors='ignore')
+                return str(value)
+        
+        return None
+    
+    def _get_storage_key_name(self, service_name: str, access_group: Optional[str]) -> str:
+        """
+        Determine the storage key name based on service name and access group.
+        
+        For services that exist in multiple folders (CloudStorage, CloudKitCache),
+        we append a folder suffix to distinguish them:
+        - CloudStorage_searchpartyd: CloudStorage.db in searchpartyd folder
+        - CloudStorage_findmylocated: CloudStorage.db in findmylocated folder
+        - CloudKitCache_searchpartyd: CloudKitCache in searchpartyd folder  
+        - CloudKitCache_findmylocated: CloudKitCache in findmylocated folder
+        
+        Args:
+            service_name: The service name (e.g., 'CloudStorage')
+            access_group: The access group (agrp) value
+            
+        Returns:
+            The storage key name to use in extracted_keys dictionary
+        """
+        # Services that need folder-specific naming
+        folder_specific_services = ['cloudstorage', 'cloudkitcache']
+        
+        service_lower = service_name.lower()
+        
+        # Check if this service needs folder-specific naming
+        needs_folder_suffix = any(svc in service_lower for svc in folder_specific_services)
+        
+        if needs_folder_suffix and access_group:
+            access_group_lower = access_group.lower()
+            
+            # Determine the folder based on access group
+            if 'searchpartyd' in access_group_lower:
+                return f"{service_name}_searchpartyd"
+            elif 'findmy' in access_group_lower and 'findmylocated' in access_group_lower:
+                return f"{service_name}_findmylocated"
+        
+        # For other services, just use the service name as-is
+        return service_name
+    
     def get_beacon_store_key(self) -> Optional[bytes]:
         """
         Get the BeaconStore key specifically.
@@ -503,23 +591,67 @@ class iOSKeychainExtractor:
         """
         return self.extracted_keys.get('Observations')
     
-    def get_cloud_storage_key(self) -> Optional[bytes]:
+    def get_local_storage_key(self) -> Optional[bytes]:
         """
-        Get the CloudStorage key for CloudStorage.db decryption (iOS 16+).
+        Get the LocalStorage key for LocalStorage.db decryption.
+        Located in: com.apple.findmy.findmylocated folder (iOS 17+)
         
         Returns:
-            The 32-byte CloudStorage key, or None if not found
+            The 32-byte LocalStorage key, or None if not found
         """
-        return self.extracted_keys.get('CloudStorage')
+        return self.extracted_keys.get('LocalStorage')
     
-    def get_cloudkit_cache_key(self) -> Optional[bytes]:
+    # =========================================================================
+    # SEARCHPARTYD FOLDER (com.apple.icloud.searchpartyd) - Folder-Specific Keys
+    # =========================================================================
+    
+    def get_searchpartyd_cloud_storage_key(self) -> Optional[bytes]:
         """
-        Get the CloudKitCache key for CloudStorage_CKRecordCache.db decryption (iOS 16+).
+        Get the CloudStorage key for CloudStorage.db in the searchpartyd folder.
+        Located in: com.apple.icloud.searchpartyd folder
+        Access Group: searchpartyd-baa-fmna-group
         
         Returns:
-            The 32-byte CloudKitCache key, or None if not found
+            The 32-byte CloudStorage key for searchpartyd, or None if not found
         """
-        return self.extracted_keys.get('CloudKitCache')
+        return self.extracted_keys.get('CloudStorage_searchpartyd')
+    
+    def get_searchpartyd_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db in the searchpartyd folder.
+        Located in: com.apple.icloud.searchpartyd folder
+        Access Group: searchpartyd-baa-fmna-group
+        
+        Returns:
+            The 32-byte CloudKitCache key for searchpartyd, or None if not found
+        """
+        return self.extracted_keys.get('CloudKitCache_searchpartyd')
+    
+    # =========================================================================
+    # FINDMYLOCATED FOLDER (com.apple.findmy.findmylocated) - iOS 17+ Only
+    # =========================================================================
+    
+    def get_findmylocated_cloud_storage_key(self) -> Optional[bytes]:
+        """
+        Get the CloudStorage key for CloudStorage.db in the findmylocated folder.
+        Located in: com.apple.findmy.findmylocated folder (iOS 17+)
+        Access Group: com.apple.findmy.findmylocated
+        
+        Returns:
+            The 32-byte CloudStorage key for findmylocated, or None if not found
+        """
+        return self.extracted_keys.get('CloudStorage_findmylocated')
+    
+    def get_findmylocated_cloudkit_cache_key(self) -> Optional[bytes]:
+        """
+        Get the CloudKitCache key for CloudStorage_CKRecordCache.db in the findmylocated folder.
+        Located in: com.apple.findmy.findmylocated folder (iOS 17+)
+        Access Group: com.apple.findmy.findmylocated
+        
+        Returns:
+            The 32-byte CloudKitCache key for findmylocated, or None if not found
+        """
+        return self.extracted_keys.get('CloudKitCache_findmylocated')
     
     def get_key_database_key(self) -> Optional[bytes]:
         """
