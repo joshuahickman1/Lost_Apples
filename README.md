@@ -168,7 +168,7 @@ KML files can be imported into Google Earth or other mapping applications to vis
 
 Decrypted binary plist (bplist) files can be exported to the working directory when the option "Export decrypted bplist files" is selected.
 
-Decrypted Observations.db and the associated write-ahead-log (-WAL) file are automatically exported to the working directory and preserved for further analysis if needed.
+Multiple SQLite databases and their associated write-ahead-log (-WAL) files from com.apple.icloud.searchpartyd & com.apple.findmy.findmylocated are automatically exported to the working directory and preserved for further analysis if needed.
 
 - **Observations.db queries**: CSV and KML exports are sent to the working directory when the queries are run
 
