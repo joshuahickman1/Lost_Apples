@@ -352,7 +352,8 @@ class UnifiedZipHandler:
         
         Returns:
             Tuple of (searchpartyd_path, keychain_path)
-            Both are None if searchpartyd not found, keychain_path is None for Graykey
+            searchpartyd_path is None if not found (findmylocated may still be extracted)
+            keychain_path is None for Graykey
             
         Note:
             findmylocated_path is stored in self.findmylocated_path after extraction
@@ -372,7 +373,8 @@ class UnifiedZipHandler:
             internal_findmylocated = self._find_findmylocated_graykey()
             internal_keychain = None
         
-        if not internal_searchpartyd:
+        # At least one folder must be found to proceed
+        if not internal_searchpartyd and not internal_findmylocated:
             return None, None
         
         # Create temporary directory in current working directory
@@ -384,11 +386,15 @@ class UnifiedZipHandler:
         
         # Extract folders
         with zipfile.ZipFile(self.zip_path, 'r') as zf:
-            # Get all files in or under the searchpartyd folder
-            files_to_extract = [
-                name for name in zf.namelist()
-                if name.startswith(internal_searchpartyd)
-            ]
+            files_to_extract = []
+            
+            # Get all files in or under the searchpartyd folder (if it exists)
+            if internal_searchpartyd:
+                searchpartyd_files = [
+                    name for name in zf.namelist()
+                    if name.startswith(internal_searchpartyd)
+                ]
+                files_to_extract.extend(searchpartyd_files)
             
             # Also get files for findmylocated if it exists
             if internal_findmylocated:
@@ -406,23 +412,24 @@ class UnifiedZipHandler:
             if internal_keychain:
                 zf.extract(internal_keychain, self.temp_dir)
         
-        # Build platform-specific path to searchpartyd
-        internal_posix = PurePosixPath(internal_searchpartyd)
-        parts = internal_posix.parts
-        
-        # Remove leading slash if present
-        if parts and parts[0] == '/':
-            parts = parts[1:]
-        
-        # Build platform-specific path
-        self.searchpartyd_path = self.temp_dir
-        for part in parts:
-            self.searchpartyd_path = self.searchpartyd_path / part
-        
-        # Verify searchpartyd path exists
-        if not self.searchpartyd_path.exists():
-            print(f"Warning: Extracted searchpartyd path does not exist: {self.searchpartyd_path}")
-            return None, None
+        # Build platform-specific path to searchpartyd (if it exists)
+        if internal_searchpartyd:
+            internal_posix = PurePosixPath(internal_searchpartyd)
+            parts = internal_posix.parts
+            
+            # Remove leading slash if present
+            if parts and parts[0] == '/':
+                parts = parts[1:]
+            
+            # Build platform-specific path
+            self.searchpartyd_path = self.temp_dir
+            for part in parts:
+                self.searchpartyd_path = self.searchpartyd_path / part
+            
+            # Verify searchpartyd path exists
+            if not self.searchpartyd_path.exists():
+                print(f"Warning: Extracted searchpartyd path does not exist: {self.searchpartyd_path}")
+                self.searchpartyd_path = None
         
         # Build findmylocated path if it exists
         if internal_findmylocated:
@@ -536,9 +543,10 @@ class UnifiedZipHandler:
     def __enter__(self):
         """Context manager entry - extract files."""
         searchpartyd, keychain = self.extract_all()
-        if not searchpartyd:
+        # At least one data folder (searchpartyd or findmylocated) must be found
+        if not searchpartyd and not self.get_findmylocated_path():
             raise ValueError(
-                f"Could not find com.apple.icloud.searchpartyd folder in {self.zip_type} zip file: {self.zip_path}"
+                f"Could not find searchpartyd or findmylocated folder in {self.zip_type} zip file: {self.zip_path}"
             )
         return searchpartyd, keychain
     
@@ -576,6 +584,10 @@ def detect_and_extract(zip_path: str) -> Tuple[Optional[str], Optional[str], Opt
         Tuple of (searchpartyd_path, keychain_path, error_message)
         If successful, paths are set and error_message is None
         If failed, paths are None and error_message contains the error
+        
+    Note:
+        searchpartyd_path may be None if only findmylocated exists.
+        Use handler.get_findmylocated_path() to get the findmylocated path.
     """
     try:
         handler = UnifiedZipHandler(zip_path)
@@ -587,9 +599,11 @@ def detect_and_extract(zip_path: str) -> Tuple[Optional[str], Optional[str], Opt
         # Extract
         searchpartyd_path, keychain_path = handler.extract_all()
         
-        if not searchpartyd_path:
+        # At least one data folder must be found
+        findmylocated_path = handler.get_findmylocated_path()
+        if not searchpartyd_path and not findmylocated_path:
             return None, None, (
-                f"Could not find com.apple.icloud.searchpartyd folder in {info['zip_type']} zip.\n\n"
+                f"Could not find searchpartyd or findmylocated folder in {info['zip_type']} zip.\n\n"
                 "Please verify the zip file is a complete iOS extraction."
             )
         

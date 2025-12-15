@@ -152,13 +152,14 @@ class SearchpartydGUI:
         self.root.resizable(True, True)
         
         # Variables for file paths
-        self.searchpartyd_path = tk.StringVar()
+        self.searchpartyd_path = tk.StringVar()  # Can be searchpartyd OR findmylocated folder
         self.keychain_path = tk.StringVar()
         
         # Zip file handling
         self.zip_handler: Optional[UnifiedZipHandler] = None
         self.using_zip = False
         self.actual_findmylocated_path: Optional[str] = None  # Path to findmylocated folder (zip or direct)
+        self.selected_folder_type: Optional[str] = None  # 'searchpartyd', 'findmylocated', or None
         
         # Variables for extracted data
         self.beacon_store_key: Optional[bytes] = None
@@ -318,8 +319,8 @@ class SearchpartydGUI:
         input_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         input_frame.columnconfigure(1, weight=1)
         
-        # searchpartyd folder/zip input
-        ttk.Label(input_frame, text="searchpartyd Folder/Zip:").grid(
+        # Data folder/zip input (searchpartyd or findmylocated)
+        ttk.Label(input_frame, text="Data Folder/Zip:").grid(
             row=0, column=0, sticky=tk.W, pady=5
         )
         
@@ -341,6 +342,15 @@ class SearchpartydGUI:
             width=10
         )
         browse_folder_btn.grid(row=0, column=0, padx=2)
+        
+        # Add tooltip for Folder button
+        ToolTip(
+            browse_folder_btn,
+            "Select either folder:\n"
+            "• com.apple.icloud.searchpartyd (tracker records)\n"
+            "• com.apple.findmy.findmylocated (device/friends data)\n\n"
+            "If sibling folder exists, it will be detected automatically."
+        )
         
         browse_zip_btn = ttk.Button(
             browse_frame,
@@ -555,8 +565,9 @@ class SearchpartydGUI:
         # Add tooltip for Export Keys button
         ToolTip(
             self.export_keys_btn,
-            "Export the extracted encryption keys (BeaconStore and Observations)\n"
-            "to a text file in the working directory."
+            "Export all extracted encryption keys to a text file.\n"
+            "Includes: BeaconStore, Observations, database keys,\n"
+            "and FindMyLocated keys."
         )
         
         # About button
@@ -569,18 +580,32 @@ class SearchpartydGUI:
         about_btn.grid(row=0, column=3, padx=5)
         
     def _browse_searchpartyd_folder(self):
-        """Open dialog to select searchpartyd folder."""
+        """Open dialog to select searchpartyd or findmylocated folder."""
         folder = filedialog.askdirectory(
-            title="Select com.apple.icloud.searchpartyd Folder",
+            title="Select searchpartyd or findmylocated Folder",
             initialdir=Path.home()
         )
         if folder:
             # Clean up any existing zip extraction
             self._cleanup_zip()
             
+            # Detect folder type based on name
+            folder_name = Path(folder).name
+            if folder_name == "com.apple.icloud.searchpartyd":
+                self.selected_folder_type = 'searchpartyd'
+                self._log(f"Selected searchpartyd folder: {folder}")
+            elif folder_name == "com.apple.findmy.findmylocated":
+                self.selected_folder_type = 'findmylocated'
+                self._log(f"Selected findmylocated folder: {folder}")
+            else:
+                # Unknown folder type - let the user proceed but warn them
+                self.selected_folder_type = None
+                self._log(f"Selected folder: {folder}")
+                self._log("  ⚠ Folder name doesn't match expected patterns", "warning")
+                self._log("  Expected: com.apple.icloud.searchpartyd or com.apple.findmy.findmylocated")
+            
             self.searchpartyd_path.set(folder)
             self.using_zip = False
-            self._log(f"Selected searchpartyd folder: {folder}")
     
     def _browse_searchpartyd_zip(self):
         """Open dialog to select iOS extraction zip file."""
@@ -601,6 +626,9 @@ class SearchpartydGUI:
             # Clean up any existing zip extraction
             self._cleanup_zip()
             
+            # Reset folder type since zip will handle detection
+            self.selected_folder_type = None
+            
             # Detect zip type using unified handler
             try:
                 temp_handler = UnifiedZipHandler(file)
@@ -611,7 +639,7 @@ class SearchpartydGUI:
                 
                 if zip_type == 'UFED':
                     self._log(f"Selected UFED extraction zip: {file}")
-                    self._log("  Will search for keychain and searchpartyd folder...")
+                    self._log("  Will search for keychain, searchpartyd & findmylocated folder...")
                     
                     # Check if keychain is present
                     info = temp_handler.get_info()
@@ -782,9 +810,29 @@ class SearchpartydGUI:
                     f.write("StandAloneBeacon Key: Not found\n")
                 f.write("\n")
                 
+                # FindMyLocated Keys
+                f.write("FindMyLocated Keys\n")
+                f.write("-"*40 + "\n")
+                
+                if self.local_storage_key:
+                    f.write(f"LocalStorage Key (hex): {self.local_storage_key.hex()}\n")
+                else:
+                    f.write("LocalStorage Key: Not found\n")
+                
+                if self.findmylocated_cloud_storage_key:
+                    f.write(f"FindMyLocated CloudStorage Key (hex): {self.findmylocated_cloud_storage_key.hex()}\n")
+                else:
+                    f.write("FindMyLocated CloudStorage Key: Not found\n")
+                
+                if self.findmylocated_cloudkit_cache_key:
+                    f.write(f"FindMyLocated CloudKitCache Key (hex): {self.findmylocated_cloudkit_cache_key.hex()}\n")
+                else:
+                    f.write("FindMyLocated CloudKitCache Key: Not found\n")
+                f.write("\n")
+                
                 f.write("="*80 + "\n")
-                f.write("Note: These keys are required to decrypt searchpartyd records\n")
-                f.write("and the encrypted databases from this iOS extraction.\n")
+                f.write("Note: These keys are required to decrypt searchpartyd records and databases, and\n")
+                f.write("findmylocated databases from this iOS extraction.\n")
             
             messagebox.showinfo(
                 "Export Keys", 
@@ -837,7 +885,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         keychain = self.keychain_path.get()
         
         if not searchpartyd:
-            messagebox.showerror("Missing Input", "Please select a searchpartyd folder or zip file.")
+            messagebox.showerror("Missing Input", "Please select a data folder (searchpartyd or findmylocated) or zip file.")
             return False
             
         # For zip files with embedded keychain, keychain may be included
@@ -868,10 +916,13 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 temp_handler = UnifiedZipHandler(searchpartyd)
                 info = temp_handler.get_info()
                 
-                if not info['has_searchpartyd']:
+                # Check for either searchpartyd or findmylocated folder
+                has_data_folder = info.get('has_searchpartyd', False) or info.get('has_findmylocated', False)
+                
+                if not has_data_folder:
                     messagebox.showerror(
                         "Invalid Zip File",
-                        f"Could not find com.apple.icloud.searchpartyd folder in {info['zip_type']} zip.\n\n"
+                        f"Could not find searchpartyd or findmylocated folder in {info['zip_type']} zip.\n\n"
                         "Please verify the zip file is a complete iOS extraction."
                     )
                     return False
@@ -917,6 +968,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         self.ios16_databases_decrypted = {}
         self.findmylocated_databases_decrypted = {}
         self.actual_findmylocated_path = None
+        # Note: Don't reset selected_folder_type here - it's set during folder selection
         self.wild_mode_records = []
         self.beacon_naming_records = []
         self.owned_beacon_records = []
@@ -957,7 +1009,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         
         try:
             self._log("="*80, "header")
-            self._log("Starting searchpartyd analysis", "header")
+            self._log("Starting analysis.  Please wait...", "header")
             self._log("="*80, "header")
             
             # If using a zip file, extract it first
@@ -980,17 +1032,11 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     # Extract both searchpartyd and keychain (if present)
                     actual_searchpartyd_path, actual_keychain_path = self.zip_handler.extract_all()
                     
-                    if not actual_searchpartyd_path:
-                        self._log("✗ Could not find searchpartyd folder in zip", "error")
-                        messagebox.showerror(
-                            "Extraction Failed",
-                            f"Could not find com.apple.icloud.searchpartyd folder in {info['zip_type']} zip.\n\n"
-                            "Please verify the zip file is a complete iOS extraction."
-                        )
-                        self._reset_buttons()
-                        return
-                    
-                    self._log(f"✓ Searchpartyd extracted to: {actual_searchpartyd_path}", "success")
+                    # Check extraction results
+                    if actual_searchpartyd_path:
+                        self._log(f"✓ Searchpartyd extracted to: {actual_searchpartyd_path}", "success")
+                    else:
+                        self._log("  Searchpartyd folder not found in zip", "warning")
                     
                     # Get findmylocated path if it exists (iOS 17+)
                     self.actual_findmylocated_path = self.zip_handler.get_findmylocated_path()
@@ -998,6 +1044,18 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                         self._log(f"✓ FindMyLocated folder extracted to: {self.actual_findmylocated_path}", "success")
                     else:
                         self._log("  FindMyLocated folder not found (may not exist or iOS < 17)")
+                    
+                    # At least one data folder must be found
+                    if not actual_searchpartyd_path and not self.actual_findmylocated_path:
+                        self._log("✗ No data folders found in zip", "error")
+                        messagebox.showerror(
+                            "Extraction Failed",
+                            f"Could not find searchpartyd or findmylocated folder in {info['zip_type']} zip.\n\n"
+                            "Please verify the zip file is a complete iOS extraction."
+                        )
+                        self._cleanup_zip()
+                        self._reset_buttons()
+                        return
                     
                     # Handle keychain (UFED only, but unified handler returns None for Graykey)
                     if actual_keychain_path:
@@ -1024,18 +1082,35 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     self._reset_buttons()
                     return
             else:
-                actual_searchpartyd_path = searchpartyd_input
-                self._log(f"\nUsing folder: {actual_searchpartyd_path}")
+                # Handle direct folder selection (could be searchpartyd OR findmylocated)
+                selected_path = Path(searchpartyd_input)
+                parent_dir = selected_path.parent
                 
-                # Check for findmylocated folder (sibling to searchpartyd)
-                searchpartyd_path_obj = Path(actual_searchpartyd_path)
-                parent_dir = searchpartyd_path_obj.parent
-                findmylocated_folder = parent_dir / "com.apple.findmy.findmylocated"
-                if findmylocated_folder.exists():
-                    self.actual_findmylocated_path = str(findmylocated_folder)
-                    self._log(f"Found FindMyLocated folder: {self.actual_findmylocated_path}")
+                if self.selected_folder_type == 'findmylocated':
+                    # User selected findmylocated folder - look for searchpartyd as sibling
+                    self.actual_findmylocated_path = searchpartyd_input
+                    self._log(f"\nUsing findmylocated folder: {self.actual_findmylocated_path}")
+                    
+                    # Look for searchpartyd folder as sibling
+                    searchpartyd_folder = parent_dir / "com.apple.icloud.searchpartyd"
+                    if searchpartyd_folder.exists():
+                        actual_searchpartyd_path = str(searchpartyd_folder)
+                        self._log(f"Found searchpartyd folder: {actual_searchpartyd_path}")
+                    else:
+                        actual_searchpartyd_path = None
+                        self._log("  searchpartyd folder not found (will only process findmylocated data)")
                 else:
-                    self._log("  FindMyLocated folder not found (may not exist or iOS < 17)")
+                    # User selected searchpartyd folder (or unknown) - original behavior
+                    actual_searchpartyd_path = searchpartyd_input
+                    self._log(f"\nUsing folder: {actual_searchpartyd_path}")
+                    
+                    # Check for findmylocated folder (sibling to searchpartyd)
+                    findmylocated_folder = parent_dir / "com.apple.findmy.findmylocated"
+                    if findmylocated_folder.exists():
+                        self.actual_findmylocated_path = str(findmylocated_folder)
+                        self._log(f"Found FindMyLocated folder: {self.actual_findmylocated_path}")
+                    else:
+                        self._log("  FindMyLocated folder not found (may not exist or iOS < 17)")
             
             # Step 1: Extract BeaconStore key
             if not self._extract_beacon_key():
@@ -1048,91 +1123,96 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 self._reset_buttons()
                 return
                 
-            # Step 2: Parse WildModeAssociationRecord
-            self._parse_wild_mode_records(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
+            # Steps 2-12: Parse searchpartyd records (skip if searchpartyd folder not available)
+            if actual_searchpartyd_path:
+                # Step 2: Parse WildModeAssociationRecord
+                self._parse_wild_mode_records(actual_searchpartyd_path)
                 
-            # Step 3: Parse BeaconNamingRecord
-            self._parse_beacon_naming_records(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                    
+                # Step 3: Parse BeaconNamingRecord
+                self._parse_beacon_naming_records(actual_searchpartyd_path)
                 
-            # Step 4: Parse OwnedBeacons
-            self._parse_owned_beacons(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                    
+                # Step 4: Parse OwnedBeacons
+                self._parse_owned_beacons(actual_searchpartyd_path)
                 
-            # Step 5: Parse SafeLocations
-            self._parse_safe_locations(actual_searchpartyd_path)
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                    
+                # Step 5: Parse SafeLocations
+                self._parse_safe_locations(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 6: Parse BeaconEstimatedLocation
+                self._parse_beacon_estimated_locations(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 7: Parse SharedBeacons
+                self._parse_shared_beacons(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 8: Parse OwnerSharingCircle
+                self._parse_owner_sharing_circle(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 9: Parse OwnerPeerTrust
+                self._parse_owner_peer_trust(actual_searchpartyd_path)
+                
+                # Step 10: Enrich OwnerSharingCircle with beacon names
+                if self.owner_sharing_circle_records and self.beacon_naming_records:
+                    self._enrich_sharing_circle_records()
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 11: Decrypt Observations.db
+                self._decrypt_observations_db(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
+                
+                # Step 12: Decrypt additional databases (searchpartyd folder)
+                self._decrypt_ios16_databases(actual_searchpartyd_path)
+            else:
+                self._log("\n--- Skipping searchpartyd record parsing (folder not available) ---", "warning")
+                self._log("  Only findmylocated databases will be processed")
             
             if not self.is_processing:
                 self._cleanup_zip()
                 self._reset_buttons()
                 return
             
-            # Step 6: Parse BeaconEstimatedLocation
-            self._parse_beacon_estimated_locations(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 7: Parse SharedBeacons
-            self._parse_shared_beacons(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 8: Parse OwnerSharingCircle
-            self._parse_owner_sharing_circle(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 9: Parse OwnerPeerTrust
-            self._parse_owner_peer_trust(actual_searchpartyd_path)
-            
-            # Step 10: Enrich OwnerSharingCircle with beacon names
-            if self.owner_sharing_circle_records and self.beacon_naming_records:
-                self._enrich_sharing_circle_records()
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 11: Decrypt Observations.db
-            self._decrypt_observations_db(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 12: Decrypt additional databases (searchpartyd folder)
-            self._decrypt_ios16_databases(actual_searchpartyd_path)
-            
-            if not self.is_processing:
-                self._cleanup_zip()
-                self._reset_buttons()
-                return
-            
-            # Step 13: Decrypt FindMyLocated databases (iOS 17+)
+            # Step 13: Decrypt FindMyLocated databases
             self._decrypt_findmylocated_databases()
             
             # Step 14: Export decrypted plists (if enabled)
@@ -1759,7 +1839,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 
                 # Extract FindMyLocated folder keys (iOS 17+)
                 # These are for the com.apple.findmy.findmylocated folder databases
-                self._log("\nChecking for FindMyLocated folder keys (iOS 17+)...")
+                self._log("\nChecking for FindMyLocated folder keys...")
                 
                 # First try simple parser (works for Graykey format)
                 self.local_storage_key = parser.get_local_storage_key()
@@ -2461,7 +2541,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         These use the same encryption method as searchpartyd databases.
         """
         self.progress_var.set("Decrypting FindMyLocated databases...")
-        self._log("\n--- Step 13: Decrypt FindMyLocated Databases (iOS 17+) ---", "header")
+        self._log("\n--- Step 13: Decrypt FindMyLocated Databases ---", "header")
         
         # Check if we have the findmylocated path
         if not self.actual_findmylocated_path:
@@ -2978,13 +3058,16 @@ def main():
     app._log("Welcome to Lost Apples", "header")
     app._log("="*80, "header")
     app._log("\nTo begin analysis:")
-    app._log("1. Select the searchpartyd folder OR a full iOS extraction zip file")
-    app._log("   - Folder: Direct path to com.apple.icloud.searchpartyd")
-    app._log("   - Zip: Full iOS extraction (will auto-find searchpartyd folder)")
-    app._log("2. Select the keychain.plist file from the same extraction (not necessary for Premium/Inseyets UFED exttractions)")
+    app._log("1. Select a data folder OR a full iOS extraction zip file")
+    app._log("   - Folder: com.apple.icloud.searchpartyd (tracker records)")
+    app._log("   - Folder: com.apple.findmy.findmylocated (device/friends data)")
+    app._log("   - Zip: Full iOS extraction (will auto-find both folders)")
+    app._log("   Note: If sibling folder exists, it will be detected automatically")
+    app._log("2. Select the keychain.plist file from the same extraction (not necessary for Premium/Inseyets UFED extractions)")
     app._log("3. Click 'Start Analysis' to process all records")
     app._log("4. Use 'Export Results' button to save parsed data")
-    app._log("5. Use the 'Query Observations...' button to run a SQLite query against the decrypted Observations.db and export results")
+    app._log("5. Use the 'Export Keys' button to save keys extracted from the keychain to a text file in the working directory")
+    app._log("6. Use the 'Query Observations...' button to run a SQLite query against the decrypted Observations.db and export results")
     app._log("Note: Individual parsers can still be run from command line.")
     
     # Start the GUI event loop
