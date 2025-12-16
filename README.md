@@ -18,7 +18,7 @@ For more information see the blog The Binary Hick:
 - **Keychain Parsing**: Automatically extracts the encryption keys from iOS keychain files associated with searchpartyd and findmylocated
 - **Multi-Record Type Parsing**: Supports multiple different record types from the searchpartyd folder
 - **searchpartyd & findmylocated Database Decryption**: Decrypts the SQLite databases and associated -WAL files from searchpartyd and findmylocated
-- **Direct Zip & Folder Processing**: Directly process commercial tool zip file extractions from Premium/Inseyets or Graykey, or process the com.apple.icloud.searchpartyd/com.apple.findmy.findmylocated folder & associated keychain
+- **Direct Zip & Folder Processing**: Directly process commercial tool zip file extractions from Premium/Inseyets or Graykey, or individually process the **com.apple.icloud.searchpartyd** or **com.apple.findmy.findmylocated** folders & their associated keychain
 - **Export Options**: Export results to CSV and KML formats for further analysis.  Also exports decrypted bplist files from searchpartyd .record files.
 - **Beacon Name Enrichment**: Links custom beacon names and emojis across related records
 - **File Integrity**: Preserves original files while creating separate decrypted copies
