@@ -15,14 +15,15 @@ For more information see the blog The Binary Hick:
 
 ## Key Features
 
-- **Keychain Parsing**: Automatically extracts the BeaconStore and Observations encryption keys from iOS keychain files
+- **Keychain Parsing**: Automatically extracts the encryption keys from iOS keychain files associated with searchpartyd and findmylocated
 - **Multi-Record Type Parsing**: Supports multiple different record types from the searchpartyd folder
-- **Observations.db Decryption**: Decrypts the SQLite database containing device observations with locations
-- **Direct Zip & Folder Processing**: Directly process commercial tool zip file extractions from Premium/Inseyets or Graykey, or process the com.apple.icloud.searchpartyd folder & associated keychain
-- **Export Options**: Export results to CSV and KML formats for further analysis
+- **searchpartyd & findmylocated Database Decryption**: Decrypts the SQLite databases and associated -WAL files from searchpartyd and findmylocated
+- **Direct Zip & Folder Processing**: Directly process commercial tool zip file extractions from Premium/Inseyets or Graykey, or process the com.apple.icloud.searchpartyd/com.apple.findmy.findmylocated folder & associated keychain
+- **Export Options**: Export results to CSV and KML formats for further analysis.  Also exports decrypted bplist files from searchpartyd .record files.
 - **Beacon Name Enrichment**: Links custom beacon names and emojis across related records
 - **File Integrity**: Preserves original files while creating separate decrypted copies
 - **Cross-Platform**: Works on macOS and Windows
+- **Query Observations.db**: run SQLite queries against Observations.db to return FindMy and Google Find My Device observation locations and export the results into CSV
 - **FindMy Devices & Friends**: Decrypt databases that contain information on FindMy devices on the iCloud account & FindMy friends
 
 ---
@@ -54,7 +55,7 @@ For more information see the blog The Binary Hick:
 
 - **Python**: Version 3.8 or higher
 - **Operating System**: macOS or Windows
-- **Source Data**: iOS device extraction from commercial forensic tools (UFED, Graykey, Cellebrite, etc.) or the individual com.apple.icloud.searchpartyd folder with accompanying keychain
+- **Source Data**: iOS device extraction from commercial forensic tools (UFED, Graykey, Cellebrite, etc.), the individual **com.apple.icloud.searchpartyd**, or **com.apple.findmy.findmylocated** folders with accompanying keychain
 
 ### Python Dependencies
 
@@ -100,7 +101,7 @@ pip3 install -r requirements.txt
 ```bash
 python lost_apples.py
 ```
-
+**Note:** macOS users may need to use `python3` instead of `python`
 ---
 
 ## Usage
@@ -109,7 +110,6 @@ python lost_apples.py
 
 The graphical interface is the recommended way to use Lost Apples. It provides:
 
-- Step-by-step workflow guidance
 - Real-time logging with color-coded messages
 - Automatic extraction format detection
 - One-click extraction, parsing and export
@@ -124,9 +124,9 @@ The graphical interface is the recommended way to use Lost Apples. It provides:
      - For Graykey extractions, the keychain should be provided in addition to the zip file
    - **Option B - Individual Files**: 
      - Select the keychain plist file
-     - Select the com.apple.icloud.searchpartyd folder containing the files you wish to process
+     - Select the **com.apple.icloud.searchpartyd** or the **com.apple.findmy.findmylocated** folder containing the files you wish to process
 
-3. **Start Analysis**: Process the data in the folder /private/var/mobile/Library/com.apple.icloud.searchpartyd folder
+3. **Start Analysis**: Process the data in the folders **com.apple.icloud.searchpartyd** and **com.apple.findmy.findmylocated** found in **/private/var/mobile/Library/**
 
 4. **Export Results**: Click the "Export Results..." to save results as CSV or KML files (some results have no KML option as they contain no location)
 
