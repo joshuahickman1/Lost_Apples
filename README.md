@@ -102,6 +102,7 @@ pip3 install -r requirements.txt
 python lost_apples.py
 ```
 **Note:** macOS users may need to use `python3` instead of `python`
+
 ---
 
 ## Usage
