@@ -34,7 +34,7 @@ For more information see the blog The Binary Hick:
 
 | Record Type | Description | Forensic Value |
 |-------------|-------------|----------------|
-| **WildModeAssociationRecord** | Unwanted tracker alerts | Evidence of stalking/tracking via rogue AirTags/Bluetooth trackers |
+| **WildModeAssociationRecord** | Unwanted tracker alerts | Location of the phone when it detected the unwanted tracker + tracker information |
 | **BeaconNamingRecord** | Custom tracker names and emojis | User-assigned names for their devices |
 | **OwnedBeacons** | Device pairing information | FindMy-compatible devices owned by the iCloud account on the device |
 | **SafeLocations** | Designated safe zones | Locations where tracking alerts are suppressed |
