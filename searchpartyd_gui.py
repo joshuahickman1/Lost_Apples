@@ -853,21 +853,20 @@ A tool for parsing
 FindMy and Bluetooth tracker records from iOS device extractions.
 
 Features:
-• Extract searchpartyd keys from iOS keychain
+• Extract searchpartyd & findmylocated keys from iOS keychain
 • Parse unwanted tracker alerts (WildModeAssociationRecord)
 • Parse custom tracker names/emojis (BeaconNamingRecord)
 • Parse beacon pairing information (OwnedBeacons)
-• Parse safe locations (SafeLocations)
+• Parse safe locations (SafeLocations) & associate beacon names to them
 • Parse beacon location history (BeaconEstimatedLocation)
 • Parse shared beacons (SharedBeacons & Owner Sharing Circle)
 • Decrypt Observations.db, CloudStorage, ItemSharingKeys, StandaloneBeacon databases and associated -WAL
 • Query Observations.db with two-stage analysis (DB only / DB+WAL)
-• Process full iOS extraction zip files directly
+• Decrypt LocalStorage.db (FindMy friends and devices) & CloudStorage.db from findmylocated folder (when present)
+• Directly process full iOS extraction zip files from Graykey & Cellebrite 
 • Export results to CSV and KML formats
-• Associate beacon names with safe locations
 
 Supports multiple iOS versions (15.3+)
-Supports Graykey & Cellebrite extraction formats
 
 For more information see the blog The Binary Hick (https://thebinaryhick.blog)
 
