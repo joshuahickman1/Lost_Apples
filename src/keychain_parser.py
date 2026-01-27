@@ -181,7 +181,7 @@ class KeychainParser:
             svce_lower = svce.lower()
             
             # Services that exist in both searchpartyd and findmylocated folders
-            dual_folder_services = ['cloudstorage', 'cloudkitcache']
+            dual_folder_services = ['cloudstorage', 'cloudkitcache', 'localstorage']
             
             if any(svc in svce_lower for svc in dual_folder_services):
                 # Use folder-specific naming
@@ -323,7 +323,21 @@ class KeychainParser:
         Returns:
             The 32-byte LocalStorage key, or None if not found
         """
-        return self.keys.get('LocalStorage')
+        # Try findmylocated-specific key first, then fall back to generic
+        key = self.keys.get('LocalStorage_findmylocated')
+        if not key:
+            key = self.keys.get('LocalStorage')
+        return key
+    
+    def get_searchpartyd_local_storage_key(self) -> Optional[bytes]:
+        """
+        Get the LocalStorage key from the searchpartyd access group.
+        Some extractions may have LocalStorage.db encrypted with this key.
+        
+        Returns:
+            The 32-byte LocalStorage key from searchpartyd, or None if not found
+        """
+        return self.keys.get('LocalStorage_searchpartyd')
     
     def get_findmylocated_cloud_storage_key(self) -> Optional[bytes]:
         """

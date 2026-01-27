@@ -554,7 +554,8 @@ class iOSKeychainExtractor:
             The storage key name to use in extracted_keys dictionary
         """
         # Services that need folder-specific naming
-        folder_specific_services = ['cloudstorage', 'cloudkitcache']
+        # LocalStorage can exist in both searchpartyd and findmylocated folders
+        folder_specific_services = ['cloudstorage', 'cloudkitcache', 'localstorage']
         
         service_lower = service_name.lower()
         
@@ -596,10 +597,30 @@ class iOSKeychainExtractor:
         Get the LocalStorage key for LocalStorage.db decryption.
         Located in: com.apple.findmy.findmylocated folder (iOS 17+)
         
+        Note: For backward compatibility, this returns the findmylocated key.
+        Use get_searchpartyd_local_storage_key() for searchpartyd folder.
+        
         Returns:
             The 32-byte LocalStorage key, or None if not found
         """
-        return self.extracted_keys.get('LocalStorage')
+        # Try findmylocated-specific key first, then fall back to generic
+        key = self.extracted_keys.get('LocalStorage_findmylocated')
+        if not key:
+            key = self.extracted_keys.get('LocalStorage')
+        return key
+    
+    def get_searchpartyd_local_storage_key(self) -> Optional[bytes]:
+        """
+        Get the LocalStorage key for LocalStorage.db in the searchpartyd folder.
+        Located in: com.apple.icloud.searchpartyd folder
+        Access Group: searchpartyd-baa-fmna-group
+        
+        Note: LocalStorage.db may exist in searchpartyd folder in some iOS versions.
+        
+        Returns:
+            The 32-byte LocalStorage key for searchpartyd, or None if not found
+        """
+        return self.extracted_keys.get('LocalStorage_searchpartyd')
     
     # =========================================================================
     # SEARCHPARTYD FOLDER (com.apple.icloud.searchpartyd) - Folder-Specific Keys

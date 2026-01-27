@@ -171,6 +171,7 @@ class SearchpartydGUI:
         self.standalone_beacon_key: Optional[bytes] = None
         # FindMyLocated folder keys (iOS 17+)
         self.local_storage_key: Optional[bytes] = None
+        self.searchpartyd_local_storage_key: Optional[bytes] = None  # LocalStorage in searchpartyd folder
         self.findmylocated_cloud_storage_key: Optional[bytes] = None
         self.findmylocated_cloudkit_cache_key: Optional[bytes] = None
         self.keychain_extractor: Optional[iOSKeychainExtractor] = None
@@ -815,9 +816,14 @@ class SearchpartydGUI:
                 f.write("-"*40 + "\n")
                 
                 if self.local_storage_key:
-                    f.write(f"LocalStorage Key (hex): {self.local_storage_key.hex()}\n")
+                    f.write(f"LocalStorage Key - findmylocated (hex): {self.local_storage_key.hex()}\n")
                 else:
-                    f.write("LocalStorage Key: Not found\n")
+                    f.write("LocalStorage Key - findmylocated: Not found\n")
+                
+                if self.searchpartyd_local_storage_key:
+                    f.write(f"LocalStorage Key - searchpartyd (hex): {self.searchpartyd_local_storage_key.hex()}\n")
+                else:
+                    f.write("LocalStorage Key - searchpartyd: Not found\n")
                 
                 if self.findmylocated_cloud_storage_key:
                     f.write(f"FindMyLocated CloudStorage Key (hex): {self.findmylocated_cloud_storage_key.hex()}\n")
@@ -961,6 +967,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         self.standalone_beacon_key = None
         # FindMyLocated folder keys (iOS 17+)
         self.local_storage_key = None
+        self.searchpartyd_local_storage_key = None
         self.findmylocated_cloud_storage_key = None
         self.findmylocated_cloudkit_cache_key = None
         self.keychain_extractor = None
@@ -1778,6 +1785,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 self.cloudkit_cache_key = parser.get_cloudkit_cache_key()
                 self.key_database_key = parser.get_key_database_key()
                 self.standalone_beacon_key = parser.get_standalone_beacon_key()
+                self.searchpartyd_local_storage_key = parser.get_searchpartyd_local_storage_key()
                 
                 # If simple parser didn't find the keys (may happen with UFED format),
                 # try the complex extractor as fallback
@@ -1801,6 +1809,8 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                             self.key_database_key = self.keychain_extractor.get_key_database_key()
                         if not self.standalone_beacon_key:
                             self.standalone_beacon_key = self.keychain_extractor.get_standalone_beacon_key()
+                        if not self.searchpartyd_local_storage_key:
+                            self.searchpartyd_local_storage_key = self.keychain_extractor.get_searchpartyd_local_storage_key()
                 
                 # Log the results
                 if self.cloud_storage_key:
@@ -1823,16 +1833,22 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     self._log(f"  Key (hex): {self.standalone_beacon_key.hex()}")
                     self._log(f"  Key length: {len(self.standalone_beacon_key)} bytes")
                 
+                if self.searchpartyd_local_storage_key:
+                    self._log("✓ LocalStorage key found (searchpartyd)", "success")
+                    self._log(f"  Key (hex): {self.searchpartyd_local_storage_key.hex()}")
+                    self._log(f"  Key length: {len(self.searchpartyd_local_storage_key)} bytes")
+                
                 # Summary of additional keys
                 ios16_keys_found = sum([
                     self.cloud_storage_key is not None,
                     self.cloudkit_cache_key is not None,
                     self.key_database_key is not None,
-                    self.standalone_beacon_key is not None
+                    self.standalone_beacon_key is not None,
+                    self.searchpartyd_local_storage_key is not None
                 ])
                 
                 if ios16_keys_found > 0:
-                    self._log(f"Found {ios16_keys_found}/4 additional database keys")
+                    self._log(f"Found {ios16_keys_found}/5 additional database keys")
                 else:
                     self._log("⚠ No additional database keys found (may not be present in older iOS versions)", "warning")
                 
@@ -1845,17 +1861,15 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 self.findmylocated_cloud_storage_key = parser.get_findmylocated_cloud_storage_key()
                 self.findmylocated_cloudkit_cache_key = parser.get_findmylocated_cloudkit_cache_key()
                 
-                # If simple parser didn't find the keys (may happen with UFED format),
-                # try the complex extractor as fallback
-                if not any([self.local_storage_key, self.findmylocated_cloud_storage_key,
-                           self.findmylocated_cloudkit_cache_key]):
-                    if self.keychain_extractor:
-                        if not self.local_storage_key:
-                            self.local_storage_key = self.keychain_extractor.get_local_storage_key()
-                        if not self.findmylocated_cloud_storage_key:
-                            self.findmylocated_cloud_storage_key = self.keychain_extractor.get_findmylocated_cloud_storage_key()
-                        if not self.findmylocated_cloudkit_cache_key:
-                            self.findmylocated_cloudkit_cache_key = self.keychain_extractor.get_findmylocated_cloudkit_cache_key()
+                # If simple parser didn't find all keys (may happen with UFED format),
+                # try the complex extractor as fallback for any missing keys
+                if self.keychain_extractor:
+                    if not self.local_storage_key:
+                        self.local_storage_key = self.keychain_extractor.get_local_storage_key()
+                    if not self.findmylocated_cloud_storage_key:
+                        self.findmylocated_cloud_storage_key = self.keychain_extractor.get_findmylocated_cloud_storage_key()
+                    if not self.findmylocated_cloudkit_cache_key:
+                        self.findmylocated_cloudkit_cache_key = self.keychain_extractor.get_findmylocated_cloudkit_cache_key()
                 
                 # Log the results
                 if self.local_storage_key:
@@ -1877,7 +1891,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 ])
                 
                 if findmylocated_keys_found > 0:
-                    self._log(f"Found {findmylocated_keys_found}/3 FindMyLocated folder keys")
+                    self._log(f"Found {findmylocated_keys_found}/3 FindMyLocated keys")
                 else:
                     self._log("⚠ No FindMyLocated keys found (folder may not exist or iOS < 17)", "warning")
                 
@@ -2412,6 +2426,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         - CloudStorage_CKRecordCache.db (key: CloudKitCache) 
         - ItemSharingKeys.db (key: KeyDatabase)
         - StandaloneBeacon.db (key: StandAloneBeacon)
+        - LocalStorage.db (key: LocalStorage) - may exist in searchpartyd folder
         
         These databases are stored in the same location as Observations.db
         (the searchpartyd folder) and use the same encryption method.
@@ -2428,6 +2443,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             'CloudStorage_CKRecordCache.db': self.cloudkit_cache_key,
             'ItemSharingKeys.db': self.key_database_key,
             'StandaloneBeacon.db': self.standalone_beacon_key,
+            'LocalStorage.db': self.searchpartyd_local_storage_key,
         }
         
         # Filter to only databases we have keys for
@@ -2604,25 +2620,51 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 base_name = db_name.replace('.db', '')
                 output_db = output_dir / f"{base_name}_decrypted.db"
                 
-                # Decrypt database
-                self._log(f"  Decrypting main database...")
-                decryptor.decrypt_database(str(db_path), str(output_db))
+                # Decrypt database - try primary key first
+                decryption_succeeded = False
+                used_alternate_key = False
                 
-                # Verify the file was created and has valid SQLite magic header
-                if output_db.exists():
-                    with open(str(output_db), 'rb') as f:
-                        header = f.read(16)
-                    if header == b'SQLite format 3\x00':
-                        db_size = output_db.stat().st_size
-                        self._log(f"  ✓ Database decrypted: {output_db.name} ({db_size:,} bytes)", "success")
-                        
-                        # Store path for later reference
-                        self.findmylocated_databases_decrypted[db_name] = str(output_db)
+                self._log(f"  Decrypting main database...")
+                try:
+                    decryptor.decrypt_database(str(db_path), str(output_db))
+                    # Verify the decrypted file has valid SQLite header
+                    if output_db.exists():
+                        with open(str(output_db), 'rb') as f:
+                            header = f.read(16)
+                        if header == b'SQLite format 3\x00':
+                            decryption_succeeded = True
+                except Exception as primary_error:
+                    # Primary key failed - this is expected if wrong key was used
+                    self._log(f"  ⚠ Primary key decryption failed: {str(primary_error)}", "warning")
+                
+                # If primary key failed and we have an alternate key for LocalStorage.db, try it
+                if not decryption_succeeded and db_name == 'LocalStorage.db' and self.searchpartyd_local_storage_key:
+                    self._log(f"  Trying alternate key (searchpartyd)...", "warning")
+                    try:
+                        decryptor_alt = ObservationsDecryptor(self.searchpartyd_local_storage_key)
+                        decryptor_alt.decrypt_database(str(db_path), str(output_db))
+                        # Verify the decrypted file has valid SQLite header
+                        if output_db.exists():
+                            with open(str(output_db), 'rb') as f:
+                                header = f.read(16)
+                            if header == b'SQLite format 3\x00':
+                                decryption_succeeded = True
+                                used_alternate_key = True
+                                decryptor = decryptor_alt  # Use alternate decryptor for WAL
+                    except Exception as alt_error:
+                        self._log(f"    Alternate key also failed: {str(alt_error)}", "error")
+                
+                if decryption_succeeded:
+                    db_size = output_db.stat().st_size
+                    if used_alternate_key:
+                        self._log(f"  ✓ Database decrypted using searchpartyd key: {output_db.name} ({db_size:,} bytes)", "success")
                     else:
-                        self._log(f"  ✗ Decryption produced invalid SQLite file", "error")
-                        continue
+                        self._log(f"  ✓ Database decrypted: {output_db.name} ({db_size:,} bytes)", "success")
+                    
+                    # Store path for later reference
+                    self.findmylocated_databases_decrypted[db_name] = str(output_db)
                 else:
-                    self._log(f"  ✗ Database file not created", "error")
+                    self._log(f"  ✗ Decryption produced invalid SQLite file", "error")
                     continue
                 
                 # Decrypt WAL file if present
