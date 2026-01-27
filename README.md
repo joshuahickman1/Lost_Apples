@@ -44,10 +44,11 @@ For more information see the blog The Binary Hick:
 | **OwnerPeerTrust** | Peer sharing relationships | People with whom beacons are shared |
 | **Observations.db** | SQLite database | Locations of the iOS device when FindMy devices are observed |
 | **ItemSharingKeys.db** | SQLite database | Pre-determined near-owner advertisements for items shared with the device being examined |
+| **LocalStorage.db (searchparty) (iOS 26)** | TBD |
 | **CloudStorage.db (searchparty)** | SQLite database | TBD |
 | **CloudStorage_CKRecordCache.db (searchparty)** | SQLite database | TBD |
 | **StandaloneBeacon.db** | SQLite database | TBD |
-| **LocalStorage.db** | SQLite database | FindMy friends and FindMy devices registered to the iCloud account on the device |
+| **LocalStorage.db (findmy)** | SQLite database | FindMy friends and FindMy devices registered to the iCloud account on the device |
 | **CloudStorage.db (findmy)** | SQLite database | Shared secrets for FindMy friends
 | **CloudStorage_CKRecordCache.db (findmy)** | SQLite database | TBD |
 
