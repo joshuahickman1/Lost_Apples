@@ -25,6 +25,7 @@ class OwnedBeaconRecord:
         self.identifier = None
         self.pairing_date = None
         self.stable_identifier = None
+        self.model = None  # Device model (e.g., "AirPods Pro (2nd generation)")
         self.custom_name = None  # Custom name from BeaconNamingRecord
         self.emoji = None  # Emoji from BeaconNamingRecord
         self.raw_data = {}
@@ -33,6 +34,7 @@ class OwnedBeaconRecord:
         """Return a string representation of the record."""
         lines = [
             f"Identifier: {self.identifier or 'Unknown'}",
+            f"Model: {self.model or 'Not specified'}",
             f"Custom Name: {self.custom_name or 'Not set'}",
             f"Emoji: {self.emoji or 'None'}",
             f"Pairing Date: {self.pairing_date or 'Unknown'}",
@@ -126,6 +128,10 @@ class OwnedBeaconsParser:
         # Extract identifier (UUID)
         if 'identifier' in plist_data:
             record.identifier = plist_data['identifier']
+        
+        # Extract model (e.g., "AirPods Pro (2nd generation)")
+        if 'model' in plist_data:
+            record.model = plist_data['model']
         
         # Extract pairing date (with iCloud account, not necessarily this device)
         if 'pairingDate' in plist_data:

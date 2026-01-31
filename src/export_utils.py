@@ -384,6 +384,7 @@ class OwnedBeaconsExporter:
         for record in records:
             csv_data.append({
                 'Identifier': record.identifier or '',
+                'Model': record.model or '',
                 'Custom_Name': record.custom_name or '',
                 'Emoji': record.emoji or '',
                 'Pairing_Date': record.pairing_date,
