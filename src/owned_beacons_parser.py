@@ -28,6 +28,15 @@ class OwnedBeaconRecord:
         self.model = None  # Device model (e.g., "AirPods Pro (2nd generation)")
         self.custom_name = None  # Custom name from BeaconNamingRecord
         self.emoji = None  # Emoji from BeaconNamingRecord
+
+        # Cryptographic key fields (from the decrypted plist)
+        self.private_key_hex = None                       # Full 85-byte composite field (public point + private scalar)
+        self.private_scalar_hex = None                    # 28-byte private scalar only (bytes 57-84 of privateKey)
+        self.public_key_hex = None                        # 57-byte master public key (P-224 uncompressed point)
+        self.shared_secret_hex = None                     # 32-byte master symmetric secret (SK0 seed)
+        self.secondary_shared_secret_hex = None           # 32 bytes, present when beacon was shared
+        self.secure_locations_shared_secret_hex = None    # 32 bytes, for UWB/Secure Locations
+
         self.raw_data = {}
     
     def __str__(self) -> str:
@@ -38,7 +47,13 @@ class OwnedBeaconRecord:
             f"Custom Name: {self.custom_name or 'Not set'}",
             f"Emoji: {self.emoji or 'None'}",
             f"Pairing Date: {self.pairing_date or 'Unknown'}",
-            f"Stable Identifier: {self.stable_identifier or 'Unknown'}"
+            f"Stable Identifier: {self.stable_identifier or 'Unknown'}",
+            f"Public Key (master, 57 bytes): {self.public_key_hex or 'Not found'}",
+            f"Private Key (full 85 bytes):   {self.private_key_hex or 'Not found'}",
+            f"Private Scalar (28 bytes):     {self.private_scalar_hex or 'Not found'}",
+            f"Shared Secret (SK0 seed):      {self.shared_secret_hex or 'Not found'}",
+            f"Secondary Shared Secret:       {self.secondary_shared_secret_hex or 'Not present'}",
+            f"Secure Locations Secret:       {self.secure_locations_shared_secret_hex or 'Not present'}",
         ]
         return "\n".join(lines)
 
@@ -145,7 +160,75 @@ class OwnedBeaconsParser:
                 record.stable_identifier = stable_id[0]
             else:
                 record.stable_identifier = stable_id
+
+        # --- Cryptographic key fields ---
+        # These fields are stored as nested dicts: {'key': {'data': b'...'}}
+        # _get_key_bytes() unwraps that structure safely.
+        try:
+            # privateKey: 85-byte composite field.
+            # Layout: bytes 0-56 = uncompressed P-224 public point (04 || X || Y)
+            #         bytes 57-84 = 28-byte private scalar
+            if 'privateKey' in plist_data:
+                pk_bytes = self._get_key_bytes(plist_data['privateKey'])
+                if pk_bytes:
+                    record.private_key_hex = pk_bytes.hex()
+                    if len(pk_bytes) >= 85:
+                        record.private_scalar_hex = pk_bytes[57:85].hex()
+                    else:
+                        print(f"  Warning: privateKey is {len(pk_bytes)} bytes (expected 85) in {record.filename}")
+
+            # publicKey: 57-byte uncompressed P-224 point (04 || X || Y)
+            if 'publicKey' in plist_data:
+                pub_bytes = self._get_key_bytes(plist_data['publicKey'])
+                if pub_bytes:
+                    record.public_key_hex = pub_bytes.hex()
+
+            # sharedSecret: 32-byte master symmetric secret — seeds rolling key derivation (SK0)
+            if 'sharedSecret' in plist_data:
+                ss_bytes = self._get_key_bytes(plist_data['sharedSecret'])
+                if ss_bytes:
+                    record.shared_secret_hex = ss_bytes.hex()
+
+            # secondarySharedSecret: present only when beacon was shared with another Apple ID
+            if 'secondarySharedSecret' in plist_data:
+                sss_bytes = self._get_key_bytes(plist_data['secondarySharedSecret'])
+                if sss_bytes:
+                    record.secondary_shared_secret_hex = sss_bytes.hex()
+
+            # secureLocationsSharedSecret: used for UWB / Secure Locations precision positioning
+            if 'secureLocationsSharedSecret' in plist_data:
+                sls_bytes = self._get_key_bytes(plist_data['secureLocationsSharedSecret'])
+                if sls_bytes:
+                    record.secure_locations_shared_secret_hex = sls_bytes.hex()
+
+        except Exception as e:
+            print(f"  Warning: could not extract cryptographic key fields from {record.filename}: {str(e)}")
     
+    @staticmethod
+    def _get_key_bytes(value) -> Optional[bytes]:
+        """
+        Unwrap a cryptographic key value from the plist.
+
+        Apple stores key fields as a nested dict:
+            {'key': {'data': b'...'}}
+        but they may also appear as raw bytes in older records.
+        Returns the raw bytes, or None if the structure is unrecognised.
+        """
+        if isinstance(value, (bytes, bytearray)):
+            return bytes(value)
+        if isinstance(value, dict):
+            # {'key': {'data': b'...'}}
+            inner = value.get('key', {})
+            if isinstance(inner, dict):
+                data = inner.get('data')
+                if isinstance(data, (bytes, bytearray)):
+                    return bytes(data)
+            # {'data': b'...'} (one level shallower)
+            data = value.get('data')
+            if isinstance(data, (bytes, bytearray)):
+                return bytes(data)
+        return None
+
     def parse_directory(self, directory_path: str) -> List[OwnedBeaconRecord]:
         """
         Parse all .record files in a directory.

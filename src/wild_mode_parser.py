@@ -33,6 +33,7 @@ class WildModeRecord:
         self.raw_data = {}
         self.ios_format = None  # 'ios17' or 'ios18' to track source format
         self.raw_advertisement = None  # Store raw advertisement data for iOS 17 records
+        self.raw_address = None        # Store raw address bytes for iOS 18 records
         self.observation_states = {}  # Dictionary of observation state names to timestamps (e.g., 'update', 'staged', 'notify')
     
     def __str__(self) -> str:
@@ -163,6 +164,11 @@ class WildModeParser:
         Handles two different iOS formats:
         - iOS 18.x+: Uses 'address' key with direct MAC address data
         - iOS 17.x and below: Uses 'advertisement' key where first 6 bytes are MAC
+
+        Note: iOS 18 records may carry BOTH an 'address' key (6-byte MAC) and an
+        'advertisement' key (full 28-byte advertisement key).  When both are present,
+        the MAC is derived from 'address' and the full advertisement is captured from
+        'advertisement' so that separated-key matching works the same as for iOS 17.
         
         Args:
             plist_data: The decrypted plist dictionary
@@ -177,18 +183,26 @@ class WildModeParser:
             # Skip if address is null or a null string (iOS 18 may have both keys)
             if address is not None and address != '$null':
                 if isinstance(address, bytes):
-                    # Direct bytes format
-                    mac = self._format_mac_address(address)
+                    # Direct bytes format.
+                    # Apply the BLE static-random address correction: force the
+                    # two most-significant bits of byte 0 to 1 (| 0xC0), matching
+                    # how iOS reports the address in Observations.db.
+                    corrected = bytes([address[0] | 0xC0]) + address[1:6]
+                    mac = self._format_mac_address(corrected)
                     record.mac_addresses.append(mac)
                     record.ios_format = 'iOS 18.x and above'
+                    record.raw_address = address  # Store raw bytes for reference
                     mac_extracted = True
                 elif isinstance(address, dict) and 'data' in address:
                     # Dictionary format with 'data' key (common iOS 18 format)
                     mac_bytes = address['data']
                     if isinstance(mac_bytes, bytes) and len(mac_bytes) >= 6:
-                        mac = self._format_mac_address(mac_bytes[:6])
+                        # Apply the BLE static-random address correction (| 0xC0)
+                        corrected = bytes([mac_bytes[0] | 0xC0]) + mac_bytes[1:6]
+                        mac = self._format_mac_address(corrected)
                         record.mac_addresses.append(mac)
                         record.ios_format = 'iOS 18.x and above'
+                        record.raw_address = mac_bytes  # Store raw bytes for reference
                         mac_extracted = True
         
         # iOS 17.x and below format: 'advertisement' key contains Bluetooth advertisement
@@ -199,12 +213,30 @@ class WildModeParser:
             if advertisement is not None and advertisement != '$null':
                 adv_data = self._extract_advertisement_data(advertisement)
                 if adv_data and len(adv_data) >= 6:
-                    # First 6 bytes are the MAC address
-                    mac = self._format_mac_address(adv_data[:6])
+                    # First 6 bytes are the MAC address.
+                    # BLE static random addresses require the two most significant bits
+                    # of the first byte to be set (per the BLE spec). The raw advertisement
+                    # data may not have these bits set, so we force them with OR 0xC0.
+                    # Example: 0x2B | 0xC0 = 0xEB (the correct first octet).
+                    mac_bytes = bytes([adv_data[0] | 0xC0]) + adv_data[1:6]
+                    mac = self._format_mac_address(mac_bytes)
                     record.mac_addresses.append(mac)
                     record.ios_format = 'iOS 17.x and below'
                     record.raw_advertisement = adv_data  # Store full advertisement for reference
                     mac_extracted = True
+
+        # iOS 18 records can carry BOTH an 'address' key (6-byte MAC) AND an
+        # 'advertisement' key (full 28-byte advertisement key).  The parser
+        # already extracted the MAC from 'address' above; now also capture the
+        # full advertisement bytes so the exporter can output 28-byte
+        # Advertisement_Hex, enabling separated-key matching in Wild Mode
+        # comparison (the same path used for iOS 17 records).
+        if mac_extracted and record.raw_advertisement is None and 'advertisement' in plist_data:
+            advertisement = plist_data['advertisement']
+            if advertisement is not None and advertisement != '$null':
+                adv_data = self._extract_advertisement_data(advertisement)
+                if adv_data and len(adv_data) == 28:
+                    record.raw_advertisement = adv_data
         
         # Some records may have multiple addresses in different keys
         if 'addresses' in plist_data:

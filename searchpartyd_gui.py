@@ -1,6 +1,6 @@
 """
 Lost Apples
-A graphical interface for parsing iOS Find My network and AirTag tracking data.
+A graphical interface for parsing iOS Find My network and Bluetooth tracker data.
 
 This GUI provides an interface to:
 1. Extract BeaconStore encryption key from iOS keychain files
@@ -17,6 +17,8 @@ This GUI provides an interface to:
 12. Decrypt iOS 16+ databases (CloudStorage.db, CloudStorage_CKRecordCache.db,
     ItemSharingKeys.db, StandaloneBeacon.db)
 13. Process full iOS extraction zip files directly
+14. Generate BLE key schedules for cross-referencing with Observations and Wild Mode records from other devices
+15. Compare Wild Mode & Observation.db records against OwnedBeacons from another device to identify potential unwanted tracker matches
 
 All individual parsers can still be run independently from the command line.
 """
@@ -134,6 +136,14 @@ from src.observations_decryptor import ObservationsDecryptor
 from src.observations_query_handler import ObservationsQueryHandler
 from src.plist_exporter import PlistExporter
 from src.findmylocated_decryptor import FindMyLocatedDecryptor
+from src.wild_mode_comparison import (
+    validate_wild_mode_csv, validate_owned_beacons_csv,
+    run_wild_mode_key_comparison,
+)
+from src.keys_file_parser import KeysDirectoryParser, format_gui_log
+from src.export_utils import KeysFileExporter, WildModeUnifiedExporter
+from src.csv_key_schedule_gui import show_key_schedule_from_csv_dialog
+from src.csv_compare_gui import show_csv_compare_dialog
 
 
 class SearchpartydGUI:
@@ -147,8 +157,8 @@ class SearchpartydGUI:
             root: The tkinter root window
         """
         self.root = root
-        self.root.title("Lost Apples 1.0")
-        self.root.geometry("900x700")
+        self.root.title("Lost Apples 2.0")
+        self.root.geometry("1300x700")
         self.root.resizable(True, True)
         
         # Variables for file paths
@@ -190,6 +200,7 @@ class SearchpartydGUI:
         self.shared_beacon_records = []
         self.owner_sharing_circle_records = []
         self.owner_peer_trust_records = []
+        self.keys_entries = []  # KeyEntry objects from Keys/ advertisement key cache
         
         # Processing flag
         self.is_processing = False
@@ -239,7 +250,7 @@ class SearchpartydGUI:
         
         title_label = ttk.Label(
             text_frame,
-            text="Lost Apples 1.0",
+            text="Lost Apples 2.0",
             font=("TkDefaultFont", 16, "bold")
         )
         title_label.grid(row=0, column=0, sticky=tk.W)
@@ -265,7 +276,7 @@ class SearchpartydGUI:
         """
         Load and display the application logo.
         
-        The logo is resized to fit nicely in the title area (80px height)
+        The logo is resized to fit in the title area (80px height)
         while maintaining aspect ratio.
         
         Args:
@@ -338,9 +349,9 @@ class SearchpartydGUI:
         
         browse_folder_btn = ttk.Button(
             browse_frame,
-            text="Folder...",
+            text="Folder",
             command=self._browse_searchpartyd_folder,
-            width=10
+            width=8
         )
         browse_folder_btn.grid(row=0, column=0, padx=2)
         
@@ -355,9 +366,9 @@ class SearchpartydGUI:
         
         browse_zip_btn = ttk.Button(
             browse_frame,
-            text="Zip...",
+            text="Zip",
             command=self._browse_searchpartyd_zip,
-            width=10
+            width=6
         )
         browse_zip_btn.grid(row=0, column=1, padx=2)
         
@@ -378,7 +389,7 @@ class SearchpartydGUI:
         
         browse_keychain_btn = ttk.Button(
             input_frame,
-            text="Browse...",
+            text="Browse",
             command=self._browse_keychain_file
         )
         browse_keychain_btn.grid(row=1, column=2, padx=5, pady=5)
@@ -507,33 +518,81 @@ class SearchpartydGUI:
         action_frame.grid(row=4, column=0, sticky=(tk.W, tk.E))
         action_frame.columnconfigure(0, weight=1)  # Allow frame to expand
         
-        # Row 1: Results buttons (centered) - Export Results and Query Observations on top
-        row1_frame = ttk.Frame(action_frame)
-        row1_frame.grid(row=0, column=0, pady=(0, 5))
-        
+        # Row 1a: Primary action buttons
+        row1a_frame = ttk.Frame(action_frame)
+        row1a_frame.grid(row=0, column=0, pady=(0, 5))
+
         # Export Results button
         self.export_results_btn = ttk.Button(
-            row1_frame,
-            text="Export Results...",
+            row1a_frame,
+            text="Export Results",
             command=self._show_export_dialog,
-            width=16,
+            width=14,
             state=tk.DISABLED
         )
         self.export_results_btn.grid(row=0, column=0, padx=5)
-        
+
         # Query Observations button (initially disabled)
         self.query_obs_btn = ttk.Button(
-            row1_frame,
-            text="Query Observations...",
+            row1a_frame,
+            text="Query Observations",
             command=self._show_observations_query_dialog,
-            width=20,
+            width=19,
             state=tk.DISABLED
         )
         self.query_obs_btn.grid(row=0, column=1, padx=5)
-        
+
+        # Row 1b: Key analysis / comparison buttons
+        row1b_frame = ttk.Frame(action_frame)
+        row1b_frame.grid(row=1, column=0, pady=(0, 5))
+
+        # Generate Key Schedule button — always enabled, loads from OwnedBeacons CSV
+        gen_key_schedule_btn = ttk.Button(
+            row1b_frame,
+            text="Generate Key Schedule",
+            command=self._show_key_schedule_from_csv_dialog,
+            width=22
+        )
+        gen_key_schedule_btn.grid(row=0, column=0, padx=5)
+        ToolTip(gen_key_schedule_btn,
+                "Generate Separated (daily PWj) or Nearby (15-minute Pi) BLE\n"
+                "advertisement key schedules from an OwnedBeacons CSV export.\n"
+                "No extraction processing required — load any previously\n"
+                "exported OwnedBeacons CSV to get started.")
+
+        # Compare from CSV button — always enabled, no extraction required
+        csv_compare_btn = ttk.Button(
+            row1b_frame,
+            text="Compare Observations",
+            command=self._show_csv_compare_dialog,
+            width=20
+        )
+        csv_compare_btn.grid(row=0, column=1, padx=5)
+        ToolTip(csv_compare_btn,
+                "Compare a Lost Apples OwnedBeacons CSV export against an\n"
+                "Observations.db CSV export — no extraction processing needed.\n"
+                "Useful for re-running comparisons on previously exported data.")
+
+        # Compare Wild Mode button — always enabled, no extraction required
+        self.compare_wild_btn = ttk.Button(
+            row1b_frame,
+            text="Compare Wild Mode",
+            command=self._show_wild_mode_comparison_dialog,
+            width=19
+        )
+        self.compare_wild_btn.grid(row=0, column=2, padx=5)
+        ToolTip(
+            self.compare_wild_btn,
+            "Compare the unified Wild Mode CSV export from this device\n"
+            "against an OwnedBeacons CSV from another device.\n\n"
+            "Matches indicate that a tracker which triggered an\n"
+            "unwanted alert on this phone is registered as an owned\n"
+            "beacon on the other phone."
+        )
+
         # Row 2: Secondary action buttons (centered) - Clear Log, Export Log, Export Keys, About
         row2_frame = ttk.Frame(action_frame)
-        row2_frame.grid(row=1, column=0)
+        row2_frame.grid(row=2, column=0)
         
         # Clear Log button
         clear_btn = ttk.Button(
@@ -852,8 +911,7 @@ class SearchpartydGUI:
                 
     def _show_about(self):
         """Show the About dialog."""
-        about_text = """Lost Apples - A iOS FindMy & Bluetooth Tracker Data Parser
-Version 1.0
+        about_text = """Lost Apples - A iOS FindMy & Bluetooth Tracker Data Parser Version 2.0
 
 A tool for parsing 
 FindMy and Bluetooth tracker records from iOS device extractions.
@@ -871,6 +929,7 @@ Features:
 • Decrypt LocalStorage.db (FindMy friends and devices) & CloudStorage.db from findmylocated folder (when present)
 • Directly process full iOS extraction zip files from Graykey & Cellebrite 
 • Export results to CSV and KML formats
+• Generate BLE key schedules for cross-referencing with Observations and Wild Mode records from other devices
 
 Supports multiple iOS versions (15.3+)
 
@@ -983,8 +1042,10 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         self.shared_beacon_records = []
         self.owner_sharing_circle_records = []
         self.owner_peer_trust_records = []
+        self.keys_entries = []
         self.export_results_btn.config(state=tk.DISABLED)
         self.export_keys_btn.config(state=tk.DISABLED)
+        self.query_obs_btn.config(state=tk.DISABLED)
         
         # Run analysis in separate thread to keep GUI responsive
         analysis_thread = threading.Thread(target=self._run_analysis, daemon=True)
@@ -1154,6 +1215,14 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     self._cleanup_zip()
                     self._reset_buttons()
                     return
+                
+                # Step 4b: Parse advertisement key cache (Keys/ folder)
+                self._parse_keys_folder(actual_searchpartyd_path)
+                
+                if not self.is_processing:
+                    self._cleanup_zip()
+                    self._reset_buttons()
+                    return
                     
                 # Step 5: Parse SafeLocations
                 self._parse_safe_locations(actual_searchpartyd_path)
@@ -1240,7 +1309,8 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             if (self.wild_mode_records or self.beacon_naming_records or 
                 self.owned_beacon_records or self.safe_location_records or 
                 self.beacon_location_records or self.shared_beacon_records or
-                self.owner_sharing_circle_records or self.owner_peer_trust_records):
+                self.owner_sharing_circle_records or self.owner_peer_trust_records or
+                self.keys_entries):
                 self.export_results_btn.config(state=tk.NORMAL)
                 self._log("\n✓ Export Results button is now enabled", "success")
             
@@ -1248,7 +1318,7 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             if self.observations_db_decrypted and Path(self.observations_db_decrypted).exists():
                 self.query_obs_btn.config(state=tk.NORMAL)
                 self._log("✓ Query Observations button is now enabled", "success")
-            
+
         except Exception as e:
             self._log(f"FATAL ERROR: {str(e)}", "error")
             messagebox.showerror("Analysis Error", f"An error occurred during analysis:\n{str(e)}")
@@ -1263,7 +1333,8 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         if not (self.wild_mode_records or self.beacon_naming_records or 
                 self.owned_beacon_records or self.safe_location_records or 
                 self.beacon_location_records or self.shared_beacon_records or
-                self.owner_sharing_circle_records or self.owner_peer_trust_records):
+                self.owner_sharing_circle_records or self.owner_peer_trust_records or
+                self.keys_entries):
             messagebox.showinfo("No Data", "No parsed records available to export.\nRun analysis first.")
             return
         
@@ -1365,6 +1436,10 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             wild_kml_btn = ttk.Button(wild_frame, text="Export to KML", 
                                      command=lambda: self._export_wild_mode_kml())
             wild_kml_btn.grid(row=1, column=1, pady=5, padx=5)
+
+            wild_unified_csv_btn = ttk.Button(wild_frame, text="Export Unified CSV",
+                                              command=lambda: self._export_wild_mode_unified_csv())
+            wild_unified_csv_btn.grid(row=2, column=0, pady=5, padx=5, sticky=tk.W)
         else:
             no_data_label = ttk.Label(wild_frame, text="No records available", foreground="gray")
             no_data_label.grid(row=1, column=0, sticky=tk.W)
@@ -1482,9 +1557,27 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             no_data_label = ttk.Label(owner_peer_frame, text="No records available", foreground="gray")
             no_data_label.grid(row=1, column=0, sticky=tk.W)
         
+        # Keys / advertisement key cache section
+        keys_export_frame = ttk.LabelFrame(main_frame, text="Advertisement Key Cache (Keys/ folder)", padding="10")
+        keys_export_frame.grid(row=9, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+
+        keys_count_label = ttk.Label(keys_export_frame, text=f"Key entries: {len(self.keys_entries):,}")
+        keys_count_label.grid(row=0, column=0, sticky=tk.W)
+
+        if self.keys_entries:
+            keys_csv_btn = ttk.Button(
+                keys_export_frame,
+                text="Export to CSV",
+                command=lambda: self._export_advertisement_keys_csv()
+            )
+            keys_csv_btn.grid(row=1, column=0, pady=5)
+        else:
+            no_data_label = ttk.Label(keys_export_frame, text="No key entries available", foreground="gray")
+            no_data_label.grid(row=1, column=0, sticky=tk.W)
+
         # Close button
         close_btn = ttk.Button(main_frame, text="Close", command=on_close, width=15)
-        close_btn.grid(row=9, column=0, columnspan=2, pady=(20, 0))
+        close_btn.grid(row=10, column=0, columnspan=2, pady=(20, 0))
     
     def _export_wild_mode_csv(self):
         """Export WildMode records to individual CSV files (one per UUID)."""
@@ -1524,6 +1617,30 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                     "Each .record file has its own KML for easier analysis."
                 )
                 self._log(f"✓ WildMode locations exported to {count} KML files in: {directory}", "success")
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
+                self._log(f"✗ Export failed: {str(e)}", "error")
+
+    def _export_wild_mode_unified_csv(self):
+        """Export a single unified Wild Mode CSV (one row per beacon UUID)."""
+        file = filedialog.asksaveasfilename(
+            title="Export Unified Wild Mode CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"wild_mode_unified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+
+        if file:
+            try:
+                count = WildModeUnifiedExporter.write_csv(self.wild_mode_records, file)
+                messagebox.showinfo(
+                    "Export Success",
+                    f"Unified Wild Mode CSV exported to:\n{file}\n\n"
+                    f"{count} row(s) written (one per beacon UUID).\n\n"
+                    "Columns include UUID, Advertisement_Hex, Advertisement_MAC,\n"
+                    "and first/last seen timestamps and coordinates."
+                )
+                self._log(f"✓ Unified Wild Mode CSV exported: {file} ({count} rows)", "success")
             except Exception as e:
                 messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
                 self._log(f"✗ Export failed: {str(e)}", "error")
@@ -1701,6 +1818,74 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
                 messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
                 self._log(f"✗ Export failed: {str(e)}", "error")
             
+    def _parse_keys_folder(self, searchpartyd_path):
+        """
+        Parse the Keys/ folder to extract advertisement key pairs (Step 4b).
+
+        The Keys/ folder lives inside com.apple.icloud.searchpartyd and contains
+        pre-computed P-224 rolling key caches, organised as:
+
+            Keys/<beacon_UUID>/Primary/                  — separated-mode, ~28 days
+            Keys/<beacon_UUID>/Secondary/                — near-owner mode, ~5 days
+            Keys/<beacon_UUID>/Primary-Advertisements/  — active batch, ~24 hrs
+
+        Each .keys file holds 207-byte entries: SK_i (AES-256), d_i (P-224 private),
+        p_i (P-224 public).  Report IDs (base64-SHA-256 of p_i) are the lookup keys
+        used to retrieve encrypted location reports from Apple's acsnservice/fetch.
+        """
+        self.progress_var.set("Parsing advertisement keys...")
+        self._log("\n--- Step 4b: Parse Advertisement Key Cache (Keys/) ---", "header")
+
+        keys_folder = Path(searchpartyd_path) / "Keys"
+
+        if not keys_folder.exists():
+            self._log("⚠ Keys/ folder not found", "warning")
+            self._log("  This folder holds pre-computed P-224 rolling key caches")
+            self._log("  It may not be present in all extractions")
+            return
+
+        self._log(f"Parsing directory: {keys_folder}")
+
+        try:
+            dir_parser = KeysDirectoryParser(str(keys_folder))
+            self.keys_entries = dir_parser.parse_all()
+
+            # Enrich entries with beacon names from BeaconNamingRecord
+            if self.keys_entries and self.beacon_naming_records:
+                self._log("Enriching key entries with beacon names...")
+                dir_parser.enrich_with_beacon_names(self.beacon_naming_records)
+
+            # Log results via the shared format_gui_log helper
+            for msg, level in format_gui_log(dir_parser):
+                self._log(msg, level or None)
+
+        except Exception as e:
+            self._log(f"✗ Failed to parse Keys/ folder: {str(e)}", "error")
+
+    def _export_advertisement_keys_csv(self):
+        """Export advertisement key cache entries to CSV."""
+        file = filedialog.asksaveasfilename(
+            title="Export Advertisement Keys to CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"advertisement_keys_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+
+        if file:
+            try:
+                count = KeysFileExporter.write_csv(self.keys_entries, file)
+                messagebox.showinfo(
+                    "Export Success",
+                    f"Advertisement key entries exported to:\n{file}\n\n"
+                    f"{count:,} rows written.\n\n"
+                    "Columns include SK_i, d_i, p_i (hex) and Report_ID_base64\n"
+                    "(the SHA-256 lookup ID for Apple's acsnservice/fetch)."
+                )
+                self._log(f"✓ Advertisement keys exported to CSV: {file} ({count:,} rows)", "success")
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
+                self._log(f"✗ Export failed: {str(e)}", "error")
+
     def _extract_beacon_key(self) -> bool:
         """
         Extract the BeaconStore and Observations keys from keychain.
@@ -2752,6 +2937,27 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
             self._log(f"✗ Failed to export decrypted plists: {str(e)}", "error")
             self._log("  This is non-fatal - continuing with analysis")
     
+    def _show_key_schedule_from_csv_dialog(self):
+        """
+        Open the unified key schedule dialog.
+
+        The dialog is always enabled and loads beacon key material from a
+        previously-exported OwnedBeacons CSV, so no extraction run is needed.
+        It supports both Separated (daily PWj) and Nearby (15-minute Pi)
+        key schedule generation and Observations.db comparison.
+        """
+        show_key_schedule_from_csv_dialog(self)
+
+    def _show_csv_compare_dialog(self):
+        """
+        Launch the on-demand CSV comparison workflow.
+
+        Allows comparison of a separated key schedule against an
+        Observations.db CSV export without needing to (re)process
+        an extraction.  The user provides both files via file pickers.
+        """
+        show_csv_compare_dialog(self)
+
     def _show_observations_query_dialog(self):
         """
         Show dialog for running SQLite queries on Observations.db with scrollable content.
@@ -3072,6 +3278,314 @@ For more information see the blog The Binary Hick (https://thebinaryhick.blog)
         )
         note_label.grid(row=7, column=0, columnspan=2, pady=(10, 0))
 
+    def _show_wild_mode_comparison_dialog(self):
+        """
+        Show a dialog for comparing a unified Wild Mode CSV export against
+        an OwnedBeacons CSV export from a different device.
+
+        This dialog is fully standalone -- no prior extraction or analysis
+        is required.  Both inputs are selected via file pickers.
+
+        Forensic context
+        ----------------
+        A match means a tracker that triggered an unwanted alert on one phone
+        is registered as an owned beacon on another phone -- linking the
+        tracker to its owner across two separate device extractions.
+
+        Match key: Wild Mode UUID  ==  OwnedBeacons Identifier
+        """
+        # ----------------------------------------------------------------
+        # Window setup (mirrors Observations query dialog style)
+        # ----------------------------------------------------------------
+        cmp_window = tk.Toplevel(self.root)
+        cmp_window.title("Compare Wild Mode Beacons")
+        cmp_window.geometry("640x600")
+        cmp_window.minsize(520, 440)
+        cmp_window.resizable(True, True)
+        cmp_window.transient(self.root)
+        cmp_window.grab_set()
+
+        cmp_window.columnconfigure(0, weight=1)
+        cmp_window.rowconfigure(0, weight=1)
+
+        # Scrollable canvas
+        outer_frame = ttk.Frame(cmp_window)
+        outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        outer_frame.columnconfigure(0, weight=1)
+        outer_frame.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer_frame, highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        scrollbar = ttk.Scrollbar(outer_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        main_frame = ttk.Frame(canvas, padding="15")
+        canvas_window = canvas.create_window((0, 0), window=main_frame, anchor=tk.NW)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+
+        def configure_scroll_region(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def configure_canvas_window(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        main_frame.bind("<Configure>", configure_scroll_region)
+        canvas.bind("<Configure>", configure_canvas_window)
+
+        import sys as _sys
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        def _on_mousewheel_mac(event):
+            canvas.yview_scroll(int(-1 * event.delta), "units")
+
+        if _sys.platform == 'darwin':
+            canvas.bind_all("<MouseWheel>", _on_mousewheel_mac)
+        else:
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+            canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            if _sys.platform != 'darwin':
+                canvas.unbind_all("<Button-4>")
+                canvas.unbind_all("<Button-5>")
+            cmp_window.destroy()
+
+        cmp_window.protocol("WM_DELETE_WINDOW", on_close)
+
+        # ----------------------------------------------------------------
+        # Title and description
+        # ----------------------------------------------------------------
+        ttk.Label(
+            main_frame,
+            text="Wild Mode Beacon Comparison",
+            font=("TkDefaultFont", 12, "bold")
+        ).grid(row=0, column=0, columnspan=2, pady=(0, 10))
+
+        desc_text = (
+            "Compares a unified Wild Mode CSV export (from one device) against an\n"
+            "OwnedBeacons CSV export (from a different device).\n\n"
+            "No extraction or prior analysis is required — select the two CSV files\n"
+            "exported from Lost Apples and click Run Comparison.\n\n"
+            "A match means a tracker that triggered an unwanted alert on one phone is\n"
+            "registered as an owned beacon on the other phone."
+        )
+        ttk.Label(main_frame, text=desc_text, justify=tk.LEFT).grid(
+            row=1, column=0, columnspan=2, sticky=tk.W, pady=(0, 15)
+        )
+
+        # ----------------------------------------------------------------
+        # File selection -- Wild Mode CSVs (up to three phones)
+        # ----------------------------------------------------------------
+        NUM_WM_PHONES = 3
+        wm_phone_labels = [
+            "Phone 1  (required)",
+            "Phone 2  (optional)",
+            "Phone 3  (optional)",
+        ]
+        wm_path_vars  = [tk.StringVar(value="No file selected")
+                         for _ in range(NUM_WM_PHONES)]
+        wm_full_paths = ['', '', '']   # absolute paths
+
+        wm_outer = ttk.LabelFrame(main_frame, text="Wild Mode CSV  (victim phones)",
+                                  padding="10")
+        wm_outer.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        wm_outer.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            wm_outer,
+            text="Export from the Export Results dialog \u2192 Wild Mode section.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray"
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 6))
+
+        wm_status_vars = [tk.StringVar(value="") for _ in range(NUM_WM_PHONES)]
+        wm_name_vars   = [tk.StringVar()         for _ in range(NUM_WM_PHONES)]
+
+        def _make_wm_browse(idx):
+            def _browse():
+                path = filedialog.askopenfilename(
+                    title=f"Select Phone {idx + 1} Wild Mode Unified CSV",
+                    filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                    initialdir=Path.cwd()
+                )
+                if not path:
+                    return
+                ok, msg = validate_wild_mode_csv(path)
+                if not ok:
+                    messagebox.showerror("Invalid File", msg)
+                    return
+                wm_full_paths[idx] = path
+                wm_path_vars[idx].set(Path(path).name)
+                wm_status_vars[idx].set("\u2713 loaded")
+                _check_ready()
+            return _browse
+
+        for i in range(NUM_WM_PHONES):
+            browse_row = 1 + i * 2   # row 0 is the hint label
+            name_row   = 2 + i * 2
+
+            ttk.Label(wm_outer, text=wm_phone_labels[i],
+                      width=22, anchor=tk.W).grid(
+                row=browse_row, column=0, sticky=tk.W, pady=(6, 0))
+            ttk.Label(wm_outer, textvariable=wm_path_vars[i],
+                      width=34, foreground="gray",
+                      anchor=tk.W).grid(
+                row=browse_row, column=1, sticky=tk.W, padx=(4, 4))
+            ttk.Button(wm_outer, text="Browse",
+                       command=_make_wm_browse(i), width=8).grid(
+                row=browse_row, column=2, padx=(0, 0))
+            ttk.Label(wm_outer, textvariable=wm_status_vars[i],
+                      foreground="green").grid(
+                row=browse_row, column=3, sticky=tk.W, padx=(6, 0))
+
+            # ---- Custom label entry ------------------------------------
+            name_frame = ttk.Frame(wm_outer)
+            name_frame.grid(row=name_row, column=0, columnspan=4,
+                            sticky=tk.W, pady=(2, 4))
+            ttk.Label(name_frame, text="Label:",
+                      foreground="gray").grid(
+                row=0, column=0, sticky=tk.W, padx=(0, 6))
+            ttk.Entry(name_frame, textvariable=wm_name_vars[i],
+                      width=30).grid(
+                row=0, column=1, sticky=tk.W)
+
+        # ----------------------------------------------------------------
+        # File selection -- OwnedBeacons CSV
+        # ----------------------------------------------------------------
+        ob_frame = ttk.LabelFrame(main_frame, text="OwnedBeacons CSV", padding="10")
+        ob_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        ob_frame.columnconfigure(0, weight=1)
+
+        ob_path_var = tk.StringVar(value="No file selected")
+        ttk.Label(ob_frame, textvariable=ob_path_var, wraplength=460).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 5)
+        )
+
+        def browse_ob_csv():
+            path = filedialog.askopenfilename(
+                title="Select OwnedBeacons CSV",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialdir=Path.cwd()
+            )
+            if path:
+                ok, msg = validate_owned_beacons_csv(path)
+                if not ok:
+                    messagebox.showerror("Invalid File", msg)
+                    return
+                ob_path_var.set(path)
+                _check_ready()
+
+        ttk.Button(ob_frame, text="Browse", command=browse_ob_csv, width=8).grid(
+            row=0, column=1, padx=(5, 0)
+        )
+
+        ttk.Label(
+            ob_frame,
+            text="Export from another device's analysis \u2192 Export Results \u2192 OwnedBeacons section.",
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray"
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+
+        # ----------------------------------------------------------------
+        # Output directory info
+        # ----------------------------------------------------------------
+        out_frame = ttk.LabelFrame(main_frame, text="Output Directory", padding="10")
+        out_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        out_frame.columnconfigure(0, weight=1)
+
+        fixed_output_dir = Path.cwd() / "wild_mode_comparison_output"
+        ttk.Label(
+            out_frame,
+            text=f"CSV and KML files will be saved to:\n{fixed_output_dir}",
+            wraplength=460
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        # ----------------------------------------------------------------
+        # Options
+        # ----------------------------------------------------------------
+        options_frame = ttk.LabelFrame(main_frame, text="Options", padding="10")
+        options_frame.grid(row=5, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+
+        export_kml_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            options_frame,
+            text="Export GPS coordinates for matched beacons to KML",
+            variable=export_kml_var
+        ).grid(row=0, column=0, sticky=tk.W)
+
+        # ----------------------------------------------------------------
+        # Results area
+        # ----------------------------------------------------------------
+        results_frame = ttk.LabelFrame(main_frame, text="Comparison Results", padding="10")
+        results_frame.grid(row=6, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+        results_frame.columnconfigure(0, weight=1)
+
+        results_text = tk.StringVar(value="Select both CSV files above, then click 'Run Comparison'.")
+        ttk.Label(results_frame, textvariable=results_text, wraplength=460, justify=tk.LEFT).grid(
+            row=0, column=0, sticky=tk.W
+        )
+
+        # ----------------------------------------------------------------
+        # Buttons
+        # ----------------------------------------------------------------
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.grid(row=7, column=0, columnspan=2, pady=(15, 0))
+
+        run_btn = ttk.Button(btn_frame, text="Run Comparison", width=18, state=tk.DISABLED)
+        run_btn.grid(row=0, column=0, padx=10)
+
+        ttk.Button(btn_frame, text="Close", command=on_close, width=15).grid(row=0, column=1, padx=10)
+
+        # ----------------------------------------------------------------
+        # Enable Run button only when Phone 1 WM CSV + OwnedBeacons are set
+        # ----------------------------------------------------------------
+        def _check_ready():
+            wm_ok = bool(wm_full_paths[0])
+            ob_ok = ob_path_var.get() not in ("", "No file selected")
+            run_btn.config(state=tk.NORMAL if (wm_ok and ob_ok) else tk.DISABLED)
+
+        # ----------------------------------------------------------------
+        # Run comparison
+        # ----------------------------------------------------------------
+        def run_comparison():
+            ob_path = ob_path_var.get()
+
+            # Build list of (label, path) for every loaded WM phone slot.
+            # Use the user-supplied name if provided; fall back to "Phone N".
+            wm_phone_paths = [
+                (wm_name_vars[i].get().strip() or f"Phone {i + 1}", wm_full_paths[i])
+                for i in range(NUM_WM_PHONES)
+                if wm_full_paths[i]
+            ]
+
+            self._log("\n" + "=" * 80, "header")
+            self._log("Wild Mode Beacon Comparison \u2014 Key Derivation", "header")
+            self._log("=" * 80, "header")
+            for label, path in wm_phone_paths:
+                self._log(f"\nWild Mode CSV ({label}): {path}")
+            self._log(f"OwnedBeacons CSV:       {ob_path}")
+
+            on_close()
+            run_wild_mode_key_comparison(self, wm_phone_paths, ob_path)
+
+        run_btn.config(command=run_comparison)
+
+        # Footer note
+        ttk.Label(
+            main_frame,
+            text=(
+                "Matched CSV columns: Wild Mode UUID, MAC, first/last seen timestamps and coordinates,\n"
+                "plus beacon model, custom name, emoji, and pairing date from OwnedBeacons."
+            ),
+            font=("TkDefaultFont", 8, "italic"),
+            foreground="gray"
+        ).grid(row=8, column=0, columnspan=2, pady=(10, 0))
+
 
 def main():
     """Main entry point for the GUI application."""
@@ -3106,9 +3620,13 @@ def main():
     app._log("   Note: If sibling folder exists, it will be detected automatically")
     app._log("2. Select the keychain.plist file from the same extraction (not necessary for Premium/Inseyets UFED extractions)")
     app._log("3. Click 'Start Analysis' to process all records")
-    app._log("4. Use 'Export Results' button to save parsed data")
-    app._log("5. Use the 'Export Keys' button to save keys extracted from the keychain to a text file in the working directory")
-    app._log("6. Use the 'Query Observations...' button to run a SQLite query against the decrypted Observations.db and export results")
+    app._log("Use 'Export Results' button to save parsed data")
+    app._log("Use the 'Export Keys' button to save keys extracted from the keychain to a text file in the working directory")
+    app._log("Use the 'Query Observations' button to run a SQLite query against the decrypted Observations.db and export results")
+    app._log("Use 'Calculate Separate Keys' to calculate the separated key payload for specific beacons during a amount of time")
+    app._log("Use 'Calulate Nearby Keys' to calculate the nearby key payload for specific beacons during a amount of time")
+    app._log("Use 'Compare Observations' to compare Observations.db output to OwnedBeacons CSV exports from a different device")
+    app._log("Use 'Compare Wild Mode' to compare a Wild Mode CSV export against an OwnedBeacons CSV export from a different device")
     app._log("Note: Individual parsers can still be run from command line.")
     
     # Start the GUI event loop

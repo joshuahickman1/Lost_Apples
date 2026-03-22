@@ -1,12 +1,14 @@
 ![](lost_apple_graphic.png)
 
-# Lost Apples 1.0 🍎
+# Lost Apples 2.0
 
 **A tool for parsing iOS FindMy network and Bluetooth tracker data on iOS devices**
 
 For more information see the blog The Binary Hick:
 
 [Endtroducing...Lost Apples](https://thebinaryhick.blog/2025/11/30/endtroducing-lost-apples/)
+
+[Old Dog, New Tricks - Lost Apples 2.0](https://thebinaryhick.blog/2026/03/22/old-dog-new-tricks-lost-apples-2-0/)
 
 [Where the Wild Tags Are & Other AirTag Stories](https://thebinaryhick.blog/2024/09/02/where-the-wild-tags-are-other-airtag-stories/)
 
@@ -27,6 +29,8 @@ For more information see the blog The Binary Hick:
 - **Cross-Platform**: Works on macOS and Windows
 - **Query Observations.db**: run SQLite queries against Observations.db to return FindMy and Google Find My Device observation locations and export the results into CSV
 - **FindMy Devices & Friends**: Decrypt databases that contain information on FindMy devices on the iCloud account & FindMy friends
+- **Generate BT Keys**: Generate nearby & separated BT advertisement keys from FindMy devices
+- **Compare Output From Different Devices**: Compare Owned Beacons from one device to the Observations.db and Wild Mode beacon data from a different device to determine proximity
 
 ---
 
@@ -138,6 +142,10 @@ The graphical interface is the recommended way to use Lost Apples. It provides:
 
 6. **Process Observations.db** (optional): Click "Query Observations..." to process the SQLite database
 
+7. **Compare Output from Different Devices** (optional):  Compare beacon keys (nearby & separated) to Wild Mode beacon or Observations.db records of another device to:
+      - Determine proximity
+      - Determine ownership of a beacon by an iCloud account
+
 #### GUI Features
 
 - **Log Window**: Shows detailed progress and any errors
@@ -153,13 +161,9 @@ Individual parsers can be run from the command line for scripted workflows or in
 
 ### CSV Export
 
-CSV files are created for each parsed record type with all available fields. Files are saved to a timestamped output folder.
-
-Example CSV columns for WildMode records:
-- UUID, Manufacturer, Model, Tracker_UUID
-- First_Seen, Trigger_DateTime, and other status times
-- MAC_Addresses, Location_Count
-- Latitude, Longitude, Timestamp, Accuracy
+- CSV files are created for each parsed record type with all available fields.  
+- Unified WildMode CSV output is available for comparison purposes.  
+- Key Generation & Comparison output to CSV is available.
 
 ### KML Export
 

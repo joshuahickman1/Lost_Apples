@@ -4,6 +4,7 @@ This module provides CSV and KML export functionality for parsed iOS forensic da
 """
 
 import csv
+import io
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
@@ -89,7 +90,7 @@ class ExportUtils:
             kml_content = ['<?xml version="1.0" encoding="UTF-8"?>']
             kml_content.append('<kml xmlns="http://www.opengis.net/kml/2.2">')
             kml_content.append('  <Document>')
-            kml_content.append(f'    <name>{ExportUtils._escape_xml(name)}</name>')
+            kml_content.append(f'    <n>{ExportUtils._escape_xml(name)}</n>')
             kml_content.append('    <description>Exported from iOS Forensics Tool</description>')
             
             # Add placemarks for each location
@@ -130,7 +131,7 @@ class ExportUtils:
                 placemark_name = item.get('name', item.get('uuid', f'Location {placemark_count}'))
                 
                 kml_content.append('    <Placemark>')
-                kml_content.append(f'      <name>{ExportUtils._escape_xml(str(placemark_name))}</name>')
+                kml_content.append(f'      <n>{ExportUtils._escape_xml(str(placemark_name))}</n>')
                 kml_content.append(f'      <description>{ExportUtils._escape_xml(description)}</description>')
                 kml_content.append('      <ExtendedData>')
                 kml_content.extend(extended_data_lines)
@@ -389,7 +390,13 @@ class OwnedBeaconsExporter:
                 'Emoji': record.emoji or '',
                 'Pairing_Date': record.pairing_date,
                 'Stable_Identifier': record.stable_identifier or '',
-                'Filename': record.filename
+                'Filename': record.filename,
+                'Public_Key_Hex': record.public_key_hex or '',
+                'Private_Key_Hex': record.private_key_hex or '',
+                'Private_Scalar_Hex': record.private_scalar_hex or '',
+                'Shared_Secret_Hex': record.shared_secret_hex or '',
+                'Secondary_Shared_Secret_Hex': record.secondary_shared_secret_hex or '',
+                'Secure_Locations_Shared_Secret_Hex': record.secure_locations_shared_secret_hex or '',
             })
         
         return csv_data
@@ -655,6 +662,308 @@ class OwnerPeerTrustExporter:
             })
         
         return csv_data
+
+
+class KeysFileExporter:
+    """
+    Export utilities for advertisement key cache data parsed by
+    KeysDirectoryParser (or a flat list of KeyEntry objects).
+
+    CSV columns
+    -----------
+    Beacon_UUID      : folder UUID (links to OwnedBeacons / BeaconNamingRecord)
+    Key_Type         : "primary", "secondary", or "primary_advertisements"
+    Beacon_Name      : friendly name from BeaconNamingRecord (blank if not enriched)
+    Beacon_Emoji     : emoji from BeaconNamingRecord          (blank if not enriched)
+    Key_ID           : integer key ID (e.g. 41848)
+    Symmetric_Key_Hex : 32-byte AES-256 symmetric rolling key as hex
+    Private_Key_Hex   : 28-byte P-224 private key as hex (SENSITIVE — decrypts reports)
+    Public_Key_Hex    : 28-byte P-224 public key as hex
+    Report_ID_base64 : base64(SHA-256(p_i)) — Apple acsnservice/fetch lookup ID
+    """
+
+    CSV_COLUMNS = [
+        "Beacon_Name",
+        "Beacon_UUID",
+        "Key_Type",
+        "Beacon_Emoji",
+        "Key_ID",
+        "Symmetric_Key_Hex",
+        "Private_Key_Hex",
+        "Public_Key_Hex",
+        "Report_ID_base64",
+    ]
+
+    @staticmethod
+    def to_csv_format(entries: list) -> List[Dict[str, Any]]:
+        """
+        Convert a list of KeyEntry objects to a list of CSV-ready dicts.
+
+        Args:
+            entries: list of KeyEntry (from KeysFileParser or KeysDirectoryParser)
+
+        Returns:
+            List of dicts with string values, one per key entry.
+        """
+        rows = []
+        for e in entries:
+            rows.append({
+                "Beacon_Name":      getattr(e, "beacon_name",  "") or "",
+                "Beacon_UUID":      getattr(e, "beacon_uuid",  "") or "",
+                "Key_Type":         getattr(e, "key_type",     "primary"),
+                "Beacon_Emoji":     getattr(e, "beacon_emoji", "") or "",
+                "Key_ID":           getattr(e, "key_id",       ""),
+                "Symmetric_Key_Hex": getattr(e, "sk_i_hex",  ""),
+                "Private_Key_Hex":   getattr(e, "d_i_hex",   ""),
+                "Public_Key_Hex":    getattr(e, "p_i_hex",   ""),
+                "Report_ID_base64":  getattr(e, "report_id", ""),
+            })
+        return rows
+
+    @staticmethod
+    def write_csv(entries: list, output_path: str) -> int:
+        """
+        Write all key entries to a CSV file.
+
+        Args:
+            entries:     list of KeyEntry objects
+            output_path: destination file path (will be created / overwritten)
+
+        Returns:
+            Number of rows written.
+        """
+        rows = KeysFileExporter.to_csv_format(entries)
+        if not rows:
+            return 0
+
+        with open(output_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=KeysFileExporter.CSV_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        return len(rows)
+
+    @staticmethod
+    def to_csv_string(entries: list) -> str:
+        """
+        Return the CSV as a string (useful for preview dialogs or clipboard copy).
+
+        Args:
+            entries: list of KeyEntry objects
+
+        Returns:
+            UTF-8 CSV string including header row.
+        """
+        rows = KeysFileExporter.to_csv_format(entries)
+        if not rows:
+            return ""
+
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf,
+            fieldnames=KeysFileExporter.CSV_COLUMNS,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+        return buf.getvalue()
+
+    @staticmethod
+    def summary_by_beacon(entries: list) -> List[Dict[str, Any]]:
+        """
+        Produce a one-row-per-beacon summary (for a quick overview table in the GUI).
+
+        Columns: Beacon_UUID, Beacon_Name, Beacon_Emoji,
+                 Primary_Keys, Primary_Hours,
+                 Secondary_Keys, Secondary_Hours,
+                 Primary_Advertisements_Keys, Primary_Advertisements_Hours,
+                 Total_Keys
+        """
+        agg: Dict[str, Dict] = {}
+        for e in entries:
+            uuid = getattr(e, "beacon_uuid", "") or "unknown"
+            if uuid not in agg:
+                agg[uuid] = {
+                    "Beacon_UUID":                 uuid,
+                    "Beacon_Name":                 getattr(e, "beacon_name",  "") or "",
+                    "Beacon_Emoji":                getattr(e, "beacon_emoji", "") or "",
+                    "Primary_Keys":                0,
+                    "Secondary_Keys":              0,
+                    "Primary_Advertisements_Keys": 0,
+                }
+            kt = getattr(e, "key_type", "primary")
+            if kt == "primary":
+                agg[uuid]["Primary_Keys"] += 1
+            elif kt == "secondary":
+                agg[uuid]["Secondary_Keys"] += 1
+            else:  # primary_advertisements (or any future type)
+                agg[uuid]["Primary_Advertisements_Keys"] += 1
+            # Update name/emoji in case early entries were not yet enriched
+            if not agg[uuid]["Beacon_Name"] and getattr(e, "beacon_name", ""):
+                agg[uuid]["Beacon_Name"]  = e.beacon_name
+                agg[uuid]["Beacon_Emoji"] = e.beacon_emoji or ""
+
+        result = []
+        for row in agg.values():
+            p  = row["Primary_Keys"]
+            s  = row["Secondary_Keys"]
+            pa = row["Primary_Advertisements_Keys"]
+            row["Primary_Hours"]                = round(p  * 15 / 60, 1)
+            row["Secondary_Hours"]              = round(s  * 15 / 60, 1)
+            row["Primary_Advertisements_Hours"] = round(pa * 15 / 60, 1)
+            row["Total_Keys"]                   = p + s + pa
+            result.append(row)
+
+        return sorted(result, key=lambda r: r["Beacon_UUID"])
+
+
+class WildModeUnifiedExporter:
+    """
+    Produces a single-row-per-beacon summary CSV for Wild Mode records.
+
+    Each row represents one WildModeAssociationRecord file and contains:
+      - The beacon UUID
+      - The advertisement bytes (hex) and derived MAC address
+      - The first and last observed location with timestamps and coordinates
+
+    This output is intended as a comparison target analogous to the
+    Observations.db CSV export — one row per tracker, not one row per
+    location point.
+
+    Columns
+    -------
+    UUID                  : WildModeAssociationRecord file UUID
+    Advertisement_Hex     : Full advertisement bytes as uppercase hex.
+                            iOS 17: raw 28-byte advertisement payload.
+                            iOS 18: 28-byte advertisement key when present in
+                              the plist (preferred); falls back to the 6-byte
+                              address bytes when no advertisement key exists.
+    Advertisement_MAC     : Derived MAC address (XX:XX:XX:XX:XX:XX), with the
+                            BLE static-random address correction (| 0xC0)
+                            applied to byte 0.
+    First_Seen_Timestamp  : Timestamp of the earliest location entry (ISO 8601)
+    First_Seen_Latitude   : Latitude at first seen time
+    First_Seen_Longitude  : Longitude at first seen time
+    Last_Seen_Timestamp   : Timestamp of the most recent location entry (ISO 8601)
+    Last_Seen_Latitude    : Latitude at last seen time
+    Last_Seen_Longitude   : Longitude at last seen time
+    """
+
+    CSV_COLUMNS = [
+        'UUID',
+        'Advertisement_Hex',
+        'Advertisement_MAC',
+        'First_Seen_Timestamp',
+        'First_Seen_Latitude',
+        'First_Seen_Longitude',
+        'Last_Seen_Timestamp',
+        'Last_Seen_Latitude',
+        'Last_Seen_Longitude',
+    ]
+
+    @staticmethod
+    def _sort_locations(locations: list) -> list:
+        """
+        Return the location list sorted ascending by timestamp.
+        Entries that have no timestamp are placed at the end so they
+        never accidentally become the apparent first or last sighting.
+        """
+        def _sort_key(loc):
+            ts = loc.get('timestamp')
+            if isinstance(ts, datetime):
+                return (0, ts)
+            # No usable timestamp — sort to the end
+            return (1, datetime.min)
+
+        return sorted(locations, key=_sort_key)
+
+    @staticmethod
+    def _advertisement_hex(record) -> str:
+        """
+        Return the raw advertisement / address bytes as an uppercase hex string.
+
+        Priority order:
+          1. raw_advertisement (28 bytes) — present on iOS 17 records and on
+             iOS 18 records whose plist includes the 'advertisement' key.
+          2. raw_address (6 bytes) — fallback for iOS 18 records that have
+             no 'advertisement' key in the plist.
+          3. Empty string if neither is available.
+        """
+        raw = getattr(record, 'raw_advertisement', None) or getattr(record, 'raw_address', None)
+        if isinstance(raw, (bytes, bytearray)):
+            return raw.hex().upper()
+        return ''
+
+    @staticmethod
+    def _format_timestamp(loc) -> str:
+        """Return the location timestamp as an ISO 8601 string, or empty string."""
+        if loc is None:
+            return ''
+        ts = loc.get('timestamp', '')
+        if isinstance(ts, datetime):
+            return ts.isoformat()
+        return str(ts) if ts else ''
+
+    @staticmethod
+    def to_csv_format(records: list) -> List[Dict[str, Any]]:
+        """
+        Convert a list of WildModeRecord objects into CSV-ready dicts.
+
+        One row is produced per record (i.e. per beacon UUID).  Locations
+        are sorted by timestamp before the first and last are selected.
+
+        Args:
+            records: List of WildModeRecord objects
+
+        Returns:
+            List of dicts keyed by CSV_COLUMNS, ready for ExportUtils.export_to_csv()
+        """
+        rows = []
+        for record in records:
+            adv_hex = WildModeUnifiedExporter._advertisement_hex(record)
+            adv_mac = record.mac_addresses[0] if record.mac_addresses else ''
+
+            sorted_locs = WildModeUnifiedExporter._sort_locations(record.locations)
+            first_loc = sorted_locs[0]  if sorted_locs else None
+            last_loc  = sorted_locs[-1] if sorted_locs else None
+
+            rows.append({
+                'UUID':                 record.uuid,
+                'Advertisement_Hex':   adv_hex,
+                'Advertisement_MAC':   adv_mac,
+                'First_Seen_Timestamp': WildModeUnifiedExporter._format_timestamp(first_loc),
+                'First_Seen_Latitude':  first_loc.get('latitude',  '') if first_loc else '',
+                'First_Seen_Longitude': first_loc.get('longitude', '') if first_loc else '',
+                'Last_Seen_Timestamp':  WildModeUnifiedExporter._format_timestamp(last_loc),
+                'Last_Seen_Latitude':   last_loc.get('latitude',  '') if last_loc else '',
+                'Last_Seen_Longitude':  last_loc.get('longitude', '') if last_loc else '',
+            })
+        return rows
+
+    @staticmethod
+    def write_csv(records: list, output_path: str) -> int:
+        """
+        Export unified Wild Mode records directly to a CSV file.
+
+        Args:
+            records:     List of WildModeRecord objects
+            output_path: Destination file path (created / overwritten)
+
+        Returns:
+            Number of rows written.
+        """
+        rows = WildModeUnifiedExporter.to_csv_format(records)
+        if not rows:
+            return 0
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        with open(output_path, 'w', newline='', encoding='utf-8') as fh:
+            writer = csv.DictWriter(fh, fieldnames=WildModeUnifiedExporter.CSV_COLUMNS)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        return len(rows)
 
 
 # Example usage
